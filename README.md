@@ -93,16 +93,18 @@ Jalankan `python forge_x.py --help` untuk melihat semua opsi. Berikut ringkasan 
 
 ## 🚀 Fitur Utama
 
-- 🔌 **Multi‑protocol** – REST, WebSocket, Server‑Sent Events, GraphQL
-- 🛡️ **WAF bypass** – Cloudflare, Akamai, auto‑detect, TLS fingerprint randomization, headless browser
-- 🧠 **Payload generator adaptif** – 200+ template (universal, bisnis, indirect, GraphQL, WebSocket)
-- 🔍 **Analyzer 3‑lapis** – Refusal detection + Regex presisi + Semantic voting → **false positive < 1%**
-- 🥷 **Stealth mode** – Random User‑Agent, delay jitter, proxy support
-- 🔎 **Auto‑discovery** – Ekstrak endpoint chat dari halaman web
-- 🔐 **Auto‑login** – Login form & session management
-- 📊 **Audit mode** – Eksploitasi logika bisnis (error handling, input validation)
-- 📄 **Output multi‑format** – JSON, HTML, CSV, terminal berwarna
-- 🧪 **15 unit test** – Semua lulus
+Framework ini menyediakan fondasi yang solid untuk pengujian keamanan prompt injection:
+
+- 🔌 **Multi‑protocol** – REST, WebSocket, Server‑Sent Events, GraphQL, dan konektor untuk Ollama, OpenAI, Claude, Gemini, Cohere, Hugging Face.
+- 🛡️ **WAF evasion** – Cloudscraper, curl_cffi, TLS fingerprint randomization, dan dukungan headless browser (eksperimental).
+- 🧠 **Payload generator** – 200+ template (universal, bisnis, GraphQL, WebSocket) dengan mutasi agresif (Unicode, emoji, RTL).
+- 🔍 **Analyzer 3‑lapis** – Refusal detection + pola regex spesifik + semantic similarity (MiniLM/DistilRoBERTa).
+- 🥷 **Stealth mode** – Rotasi User‑Agent, delay jitter, dan dukungan proxy.
+- 🔎 **Auto‑discovery** – Mencari endpoint chat dari halaman web.
+- 🔐 **Auto‑login** – Dukungan login form & session management.
+- 📊 **Audit mode** – Fokus pada logika bisnis (error handling, input validation).
+- 📄 **Output multi‑format** – JSON, HTML, CSV, terminal berwarna.
+- 🧪 **15 unit test** – Memvalidasi komponen inti.
 
 ---
 
@@ -202,6 +204,26 @@ Laporan disimpan di folder `reports/`.
   "severity": "High"
 }
 ``` 
+---
+
+## ⚠️ Keterbatasan & Roadmap
+
+Tool ini adalah **kerangka kerja (framework) open‑source**, bukan *enterprise product*.  
+Beberapa keterbatasan yang perlu diketahui:
+
+- **Payload generator** masih berbasis template. Untuk target modern, payload mungkin perlu disesuaikan secara manual.
+- **Analyzer** mengandalkan kombinasi regex dan semantic similarity. False positive bisa terjadi pada respons yang meniru kebocoran (misalnya roleplay).
+- **WAF bypass** belum mencakup teknik canggih seperti JA3 spoofing atau HTTP/2 fingerprint control. Fitur headless masih eksperimental.
+- **Belum ada benchmark independen** untuk mengukur presisi/recall di berbagai model.
+
+Rencana pengembangan selanjutnya:
+- [ ] Integrasi JA3/JA4 fingerprint randomization penuh
+- [ ] Response clustering & confidence scoring berbasis embedding
+- [ ] Multi‑turn attack tree
+- [ ] Benchmark dataset publik (Gandalf, HackAPrompt)
+- [ ] Dashboard web untuk visualisasi hasil
+
+Kontribusi sangat diterima! Silakan buka *issue* atau *pull request*.
 
 ---
 
