@@ -375,5 +375,5 @@ git push origin fitur-keren
 
 7. **Buka Pull Request** – kembali ke GitHub dan klik **Compare & pull request**.
 
-Kami akan meninjau PR Anda sesegera mungkin. Jangan ragu untuk membuka issue terlebih dahulu untuk mendiskusikan ide besar.
+Saya akan meninjau PR Anda sesegera mungkin. Jangan ragu untuk membuka issue terlebih dahulu untuk mendiskusikan ide besar.
 
