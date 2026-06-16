@@ -36,57 +36,82 @@ def parse_auth_data(val):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="InjectionForge Pro X v3.4 – Full Spectrum",
-        formatter_class=argparse.RawTextHelpFormatter
+        description="InjectionForge Pro X v1.0 – Full Spectrum",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog="""
+Contoh penggunaan:
+  # Validasi analyzer
+  python forge_x.py --validate --light --offline
+
+  # Mock target (latihan)
+  python forge_x.py --target mock --rounds 10 --aggressive --format json --offline
+
+  # Model lokal (Ollama)
+  python forge_x.py --target ollama --model llama3 --category advanced --rounds 20 --aggressive --format json --offline
+
+  # REST API dengan audit mode
+  python forge_x.py --target custom --endpoint "https://api.umkm.com/chat" --method POST --json-path "reply" --audit --rounds 20 --format html --offline
+
+  # WAF bypass
+  python forge_x.py --target custom --endpoint "https://protected.umkm.com/api/chat" --bypass-waf auto --tls-fingerprint random --stealth --aggressive --rounds 20
+        """
     )
-    parser.add_argument("--target", choices=[
-        "auto", "mock", "custom", "openai", "claude", "gemini", "cohere",
-        "ollama", "huggingface", "graphql"
-    ], default="auto")
-    parser.add_argument("--method", default="POST")
-    parser.add_argument("--endpoint", help="API/chat URL")
-    parser.add_argument("--api-key")
-    parser.add_argument("--model")
-    parser.add_argument("--headers")
-    parser.add_argument("--cookie")
-    parser.add_argument("--json-path")
-    parser.add_argument("--form", action="store_true")
-    parser.add_argument("--csrf-token")
-    parser.add_argument("--auth-endpoint")
-    parser.add_argument("--auth-data")
-    parser.add_argument("--login", help="URL login form")
-    parser.add_argument("--username")
-    parser.add_argument("--password")
-    parser.add_argument("--proxy")
-    parser.add_argument("--stealth", action="store_true")
-    parser.add_argument("--delay", type=float, default=1.0)
-    parser.add_argument("--timeout", type=int, default=30)
-    parser.add_argument("--rounds", type=int, default=10)
-    parser.add_argument("--category", choices=[
-        "basic", "advanced", "indirect", "agent", "graphql"
-    ], default="basic")
-    parser.add_argument("--mutate", action="store_true")
-    parser.add_argument("--aggressive", action="store_true")
-    parser.add_argument("--adaptive", action="store_true")
-    parser.add_argument("--multi-stage", action="store_true")
-    parser.add_argument("--history")
-    parser.add_argument("--output")
-    parser.add_argument("--format", choices=["json", "html", "csv", "term"], default="json")
-    parser.add_argument("--validate", action="store_true")
-    parser.add_argument("--light", action="store_true")
-    parser.add_argument("--discover", action="store_true")
-    parser.add_argument("--auto-profile", action="store_true", default=True)
-    parser.add_argument("--diff", action="store_true")
-    parser.add_argument("--bypass-waf", choices=["cloudflare", "akamai", "auto", "none"], default="none")
-    parser.add_argument("--tls-fingerprint", choices=["random", "chrome", "firefox", "safari"], default="none")
-    parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--waf-detect", action="store_true")
-    parser.add_argument("--graphql-introspect", action="store_true", help="Introspect GraphQL schema before attack")
+
+    # Target & koneksi
+    parser.add_argument("--target", choices=["auto","mock","custom","openai","claude","gemini","cohere","ollama","huggingface","graphql"], default="auto", help="Jenis target (default: auto)")
+    parser.add_argument("--method", default="POST", help="HTTP method (POST, GET, WS, SSE)")
+    parser.add_argument("--endpoint", help="URL endpoint API/chat")
+    parser.add_argument("--api-key", help="API key (untuk vendor LLM)")
+    parser.add_argument("--model", help="Nama model (untuk Ollama/Hugging Face)")
+    parser.add_argument("--headers", help='Header tambahan (JSON atau "Key:Val,Key:Val")')
+    parser.add_argument("--cookie", help="Cookie string atau file")
+    parser.add_argument("--json-path", help="Jalur ke teks respons (contoh: data.reply)")
+    parser.add_argument("--form", action="store_true", help="Kirim sebagai form-urlencoded")
+    parser.add_argument("--csrf-token", help="URL untuk ambil CSRF token, atau token statis")
+    parser.add_argument("--auth-endpoint", help="URL untuk ambil auth token")
+    parser.add_argument("--auth-data", help="Data untuk auth request (JSON atau key=val)")
+    parser.add_argument("--login", help="URL form login untuk auto-login")
+    parser.add_argument("--username", help="Username untuk login")
+    parser.add_argument("--password", help="Password untuk login")
+    parser.add_argument("--proxy", help="Proxy URL (contoh: http://127.0.0.1:8080)")
+    parser.add_argument("--stealth", action="store_true", help="Aktifkan random User-Agent + delay jitter")
+    parser.add_argument("--delay", type=float, default=1.0, help="Delay dasar antar request (detik)")
+    parser.add_argument("--timeout", type=int, default=30, help="Timeout request (detik)")
+
+    # Payload & serangan
+    parser.add_argument("--rounds", type=int, default=10, help="Jumlah percobaan injeksi")
+    parser.add_argument("--category", choices=["basic","advanced","indirect","agent","graphql"], default="basic", help="Kategori payload")
+    parser.add_argument("--mutate", action="store_true", help="Aktifkan mutasi standar (base64, ROT13, dll.)")
+    parser.add_argument("--aggressive", action="store_true", help="Mutasi agresif + generator jika database kosong")
+    parser.add_argument("--adaptive", action="store_true", help="Payload adaptif berdasarkan bobot keberhasilan")
+    parser.add_argument("--multi-stage", action="store_true", help="Serangan 2‑langkah (priming + exploitation)")
+    parser.add_argument("--history", help="File JSON conversation history")
+    parser.add_argument("--audit", action="store_true", help="Mode audit: payload bisnis tanpa mutasi")
+
+    # Output
+    parser.add_argument("--output", help="File laporan (default: reports/report.json)")
+    parser.add_argument("--format", choices=["json","html","csv","term"], default="json", help="Format laporan")
+    parser.add_argument("--diff", action="store_true", help="Bandingkan respons dengan baseline (prompt netral)")
+
+    # Validasi
+    parser.add_argument("--validate", action="store_true", help="Self‑test analyzer (presisi >= 95%)")
+    parser.add_argument("--light", action="store_true", help="Gunakan hanya satu model (lebih ringan)")
     parser.add_argument("--offline", action="store_true", help="Mode offline: tidak unduh model, hanya regex+refusal")
-    parser.add_argument("--insecure", action="store_true",
-                        help="Nonaktifkan verifikasi SSL (hanya untuk testing internal yang sah!)")
-    parser.add_argument("--audit", action="store_true",
-                        help="Mode audit: payload bisnis tanpa mutasi, fokus ke logika aplikasi")
+
+    # Discovery & profiling
+    parser.add_argument("--discover", action="store_true", help="Auto‑discovery endpoint dari halaman web")
+    parser.add_argument("--auto-profile", action="store_true", default=True, help="Profil target & pilih strategi otomatis")
+    parser.add_argument("--waf-detect", action="store_true", help="Deteksi WAF tanpa menjalankan serangan")
+    parser.add_argument("--graphql-introspect", action="store_true", help="Introspect GraphQL schema sebelum serangan")
+
+    # WAF bypass
+    parser.add_argument("--bypass-waf", choices=["cloudflare","akamai","auto","none"], default="none", help="Bypass WAF (cloudflare, akamai, auto)")
+    parser.add_argument("--tls-fingerprint", choices=["random","chrome","firefox","safari"], default="none", help="TLS fingerprint untuk hindari deteksi")
+    parser.add_argument("--headless", action="store_true", help="Gunakan headless browser untuk JS challenge")
+
+    # Keamanan koneksi
+    parser.add_argument("--insecure", action="store_true", help="Nonaktifkan verifikasi SSL (hanya untuk testing internal yang sah!)")
+
     args = parser.parse_args()
 
     # Validasi analyzer

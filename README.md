@@ -29,6 +29,68 @@
 
 ---
 
+## 🆘 Bantuan (CLI Reference)
+
+Jalankan `python forge_x.py --help` untuk melihat semua opsi. Berikut ringkasan flag utama:
+
+### 🔌 Target & Koneksi
+| Flag | Deskripsi | Contoh |
+|------|-----------|--------|
+| `--target` | Jenis target: `auto`, `mock`, `custom`, `openai`, `claude`, `gemini`, `cohere`, `ollama`, `huggingface`, `graphql` | `--target custom` |
+| `--endpoint` | URL endpoint API/chat | `--endpoint https://api.umkm.com/chat` |
+| `--method` | HTTP method (`POST`, `GET`, `WS`, `SSE`) | `--method POST` |
+| `--headers` | Header tambahan (JSON atau `Key:Val`) | `--headers '{"Authorization":"Bearer xyz"}'` |
+| `--cookie` | Cookie string atau file | `--cookie "session=abc123"` |
+| `--json-path` | Jalur ke teks respons (contoh: `data.reply`) | `--json-path "data.text"` |
+| `--form` | Kirim sebagai form‑encoded | `--form` |
+| `--timeout` | Timeout request (detik) | `--timeout 30` |
+
+### 🧠 Payload & Serangan
+| Flag | Deskripsi | Contoh |
+|------|-----------|--------|
+| `--category` | Kategori payload: `basic`, `advanced`, `indirect`, `agent`, `graphql` | `--category advanced` |
+| `--rounds` | Jumlah percobaan | `--rounds 20` |
+| `--mutate` | Aktifkan mutasi standar (base64, ROT13, dll.) | `--mutate` |
+| `--aggressive` | Mutasi agresif + generator jika database kosong | `--aggressive` |
+| `--audit` | Mode audit: payload bisnis tanpa mutasi | `--audit` |
+| `--adaptive` | Payload adaptif berdasarkan bobot keberhasilan | `--adaptive` |
+| `--multi-stage` | Serangan 2‑langkah (priming + exploitation) | `--multi-stage` |
+
+### 🛡️ WAF & Stealth
+| Flag | Deskripsi | Contoh |
+|------|-----------|--------|
+| `--bypass-waf` | `cloudflare`, `akamai`, `auto`, `none` | `--bypass-waf auto` |
+| `--tls-fingerprint` | `random`, `chrome`, `firefox`, `safari` | `--tls-fingerprint random` |
+| `--headless` | Gunakan headless browser untuk JS challenge | `--headless` |
+| `--stealth` | Random User‑Agent + delay jitter | `--stealth` |
+| `--delay` | Delay dasar antar request (detik) | `--delay 1.5` |
+| `--proxy` | Proxy URL | `--proxy http://127.0.0.1:8080` |
+| `--insecure` | Matikan verifikasi SSL (hanya untuk testing internal) | `--insecure` |
+
+### 🔍 Discovery & Profiling
+| Flag | Deskripsi | Contoh |
+|------|-----------|--------|
+| `--discover` | Auto‑discover endpoint dari halaman web | `--discover` |
+| `--auto-profile` | Profil target & pilih strategi otomatis | `--auto-profile` |
+| `--waf-detect` | Deteksi WAF tanpa menjalankan serangan | `--waf-detect` |
+| `--graphql-introspect` | Introspect GraphQL schema | `--graphql-introspect` |
+
+### 📊 Output
+| Flag | Deskripsi | Contoh |
+|------|-----------|--------|
+| `--format` | `json`, `html`, `csv`, `term` | `--format html` |
+| `--output` | File laporan (default: `reports/report.json`) | `--output audit.html` |
+| `--diff` | Bandingkan respons dengan baseline (prompt netral) | `--diff` |
+
+### ⚙️ Validasi & Mode Khusus
+| Flag | Deskripsi |
+|------|-----------|
+| `--validate` | Self‑test analyzer (presisi ≥ 95%) |
+| `--light` | Gunakan hanya satu model (lebih ringan) |
+| `--offline` | Mode offline: tidak unduh model, hanya regex+refusal |
+
+---
+
 ## 🚀 Fitur Utama
 
 - 🔌 **Multi‑protocol** – REST, WebSocket, Server‑Sent Events, GraphQL
