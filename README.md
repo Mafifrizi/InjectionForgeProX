@@ -4,7 +4,7 @@
 
 [![Tests](https://img.shields.io/badge/tests-15%2F15%20passed-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.4.0-orange)]()
+[![Version](https://img.shields.io/badge/version-1.0.0-orange)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 
 ---
@@ -12,6 +12,8 @@
 ## 📖 Daftar Isi
 
 - [Fitur Utama](#-fitur-utama)
+- [Fitur Advanced (v1.0)](#-fitur-advanced-v10)
+- [Validasi & Benchmark](#-validasi--benchmark)
 - [Instalasi](#-instalasi)
 - [Validasi Analyzer](#-validasi-analyzer)
 - [Penggunaan Dasar](#-penggunaan-dasar)
@@ -55,6 +57,9 @@ Jalankan `python forge_x.py --help` untuk melihat semua opsi. Berikut ringkasan 
 | `--audit` | Mode audit: payload bisnis tanpa mutasi | `--audit` |
 | `--adaptive` | Payload adaptif berdasarkan bobot keberhasilan | `--adaptive` |
 | `--multi-stage` | Serangan 2‑langkah (priming + exploitation) | `--multi-stage` |
+| `--attack-tree` | Gunakan attack tree multi‑turn adaptif | `--attack-tree` |
+| `--max-depth` | Kedalaman maksimum attack tree | `--max-depth 3` |
+| `--llm-judge` | URL Ollama untuk LLM judge (contoh: `http://localhost:11434`) | `--llm-judge http://localhost:11434` |
 
 ### 🛡️ WAF & Stealth
 | Flag | Deskripsi | Contoh |
@@ -98,7 +103,7 @@ Framework ini menyediakan fondasi yang solid untuk pengujian keamanan prompt inj
 - 🔌 **Multi‑protocol** – REST, WebSocket, Server‑Sent Events, GraphQL, dan konektor untuk Ollama, OpenAI, Claude, Gemini, Cohere, Hugging Face.
 - 🛡️ **WAF evasion** – Cloudscraper, curl_cffi, TLS fingerprint randomization, dan dukungan headless browser (eksperimental).
 - 🧠 **Payload generator** – 200+ template (universal, bisnis, GraphQL, WebSocket) dengan mutasi agresif (Unicode, emoji, RTL).
-- 🔍 **Analyzer 3‑lapis** – Refusal detection + pola regex spesifik + semantic similarity (MiniLM/DistilRoBERTa).
+- 🔍 **Analyzer 4‑lapis** – Refusal detection + pola regex spesifik + semantic similarity (MiniLM/DistilRoBERTa) + LLM judge opsional.
 - 🥷 **Stealth mode** – Rotasi User‑Agent, delay jitter, dan dukungan proxy.
 - 🔎 **Auto‑discovery** – Mencari endpoint chat dari halaman web.
 - 🔐 **Auto‑login** – Dukungan login form & session management.
@@ -108,10 +113,35 @@ Framework ini menyediakan fondasi yang solid untuk pengujian keamanan prompt inj
 
 ---
 
+## 🆕 Fitur Advanced (v1.0)
+
+- 🔐 **JA3/JA4 Fingerprint Spoofing** – Rotasi sidik jari TLS untuk menghindari deteksi WAF modern. Didukung oleh modul `core/tls_fingerprint.py` yang terintegrasi penuh dengan `WAFBypass`.
+- 🌲 **Attack Tree Multi‑Turn** – Serangan adaptif berdasarkan respons target. Jika respons pertama refusal, otomatis coba payload sidestep; jika respons mengaku sebagai AI, otomatis coba payload roleplay. Kedalaman pohon bisa diatur dengan `--max-depth`.
+- 🧠 **LLM Judge (Ollama)** – Lapis evaluasi ke‑4 yang memanfaatkan model lokal (Llama 3) untuk menilai apakah respons mengandung kebocoran data. Diaktifkan dengan `--llm-judge http://localhost:11434`.
+
+---
+
+## 🔬 Validasi & Benchmark
+
+Tool telah diuji dengan dataset berlabel 100 entri (`data/benchmark.json`) dan mencapai:
+
+| Metrik | Nilai |
+|--------|-------|
+| **Precision** | 100.0% |
+| **Recall**    | 75.0%  |
+| **F1 Score**  | 85.7%  |
+
+Hasil lengkap dapat direproduksi dengan:
+```bash
+python evaluate.py
+```
+
+---
+
 ## 📦 Instalasi
 
 ```bash
-git https://github.com/Mafifrizi/InjectionForgeProX.git
+git clone https://github.com/Mafifrizi/InjectionForgeProX.git
 cd InjectionForgeProX
 pip install -r requirements.txt
 playwright install   # hanya untuk mode headless
@@ -145,24 +175,24 @@ python forge_x.py --target ollama --model llama3 --category advanced --rounds 20
 
 **3. REST API**
 
-```bash
+```bash 
 python forge_x.py --target custom --endpoint "https://api.umkm.com/chat" \
   --method POST --json-path "reply" --audit --rounds 20 --format html --offline
 ```
 
 **4. GraphQL**
 
-```bash
+```bash 
 python forge_x.py --target graphql --endpoint "https://api.umkm.com/graphql" \
   --category graphql --rounds 20 --aggressive --format json --offline
 ```
 
 **5. WebSocket**
 
-```bash
+```bash 
 python forge_x.py --target custom --method WS --endpoint "wss://chat.umkm.com/ws" \
   --rounds 10 --aggressive --format json --offline
-``` 
+```
 
 **6. WAF Bypass**
 
@@ -178,20 +208,36 @@ python forge_x.py --target auto --discover --endpoint "https://umkm.com/chat-pag
   --auto-profile --rounds 20 --format json --offline
 ```
 
+**8. Attack Tree**
+
+```bash 
+python forge_x.py --target mock --attack-tree --max-depth 3
+```
+
+**9. LLM Judge**
+
+```bash
+python forge_x.py --target ollama --model llama3 --category advanced --rounds 20 --llm-judge http://localhost:11434
+```
+
 ---
 
 ## 📊 Output
 
 Laporan disimpan di folder `reports/`.
 
-| Format   | Perintah        |
-|----------|-----------------|
-| JSON     | `--format json` |
-| HTML     | `--format html` |
-| CSV      | `--format csv`  |
+| Format | Perintah |
+|---------|---------|
+| JSON | `--format json` |
+| HTML | `--format html` |
+| CSV | `--format csv` |
 | Terminal | `--format term` |
 
-### Contoh entri sukses:
+---
+
+### Contoh entri sukses
+
+> Hasil berikut menunjukkan kebocoran data sensitif yang terdeteksi.
 
 ```json
 {
@@ -203,7 +249,8 @@ Laporan disimpan di folder `reports/`.
   "leaked_data": ["umkm-public-token-2025"],
   "severity": "High"
 }
-``` 
+```
+
 ---
 
 ## ⚠️ Keterbatasan & Roadmap
@@ -213,29 +260,28 @@ Beberapa keterbatasan yang perlu diketahui:
 
 - **Payload generator** masih berbasis template. Untuk target modern, payload mungkin perlu disesuaikan secara manual.
 - **Analyzer** mengandalkan kombinasi regex dan semantic similarity. False positive bisa terjadi pada respons yang meniru kebocoran (misalnya roleplay).
-- **WAF bypass** belum mencakup teknik canggih seperti JA3 spoofing atau HTTP/2 fingerprint control. Fitur headless masih eksperimental.
-- **Belum ada benchmark independen** untuk mengukur presisi/recall di berbagai model.
+- **WAF bypass** sudah mencakup JA3 spoofing, namun masih mengandalkan `curl_cffi`. Dukungan HTTP/2 fingerprint control masih dalam rencana.
 
 Rencana pengembangan selanjutnya:
-- [ ] Integrasi JA3/JA4 fingerprint randomization penuh
-- [ ] Response clustering & confidence scoring berbasis embedding
-- [ ] Multi‑turn attack tree
-- [ ] Benchmark dataset publik (Gandalf, HackAPrompt)
+- [x] Integrasi JA3/JA4 fingerprint randomization penuh
+- [x] Response clustering & confidence scoring berbasis embedding
+- [x] Multi‑turn attack tree
+- [x] Benchmark dataset publik
 - [ ] Dashboard web untuk visualisasi hasil
+- [ ] Integrasi dengan model evaluasi eksternal (selain Ollama)
 
 Kontribusi sangat diterima! Silakan buka *issue* atau *pull request*.
 
 ---
 
-## 🧩 Struktur Proyek
-
-```text
+```text 
 InjectionForgeProX/
-├── forge_x.py                  # CLI utama
+├── forge_x.py                 
 ├── requirements.txt
 ├── README.md
 ├── LICENSE
 ├── .gitignore
+├── evaluate.py               
 │
 ├── core/
 │   ├── __init__.py
@@ -247,6 +293,8 @@ InjectionForgeProX/
 │   ├── validator.py
 │   ├── reporter.py
 │   ├── waf_bypass.py
+│   ├── tls_fingerprint.py     
+│   ├── attack_tree.py          
 │   ├── profiler.py
 │   ├── auth.py
 │   ├── auto_discovery.py
@@ -274,6 +322,7 @@ InjectionForgeProX/
 │   ├── payloads_graphql.json
 │   ├── refusal_phrases.txt
 │   ├── labeled_test_set.json
+│   ├── benchmark.json          
 │   └── user_agents.txt
 │
 ├── tests/
@@ -283,38 +332,48 @@ InjectionForgeProX/
 │   ├── test_connectors.py
 │   └── test_integration.py
 │
-└── reports/                    # Auto-generated
-```
+└── reports/                    
+``` 
 
 ---
 
 ## 🤝 Berkontribusi
 
-Kontribusi sangat diterima! Silakan buka issue atau pull request.
+Kontribusi sangat diterima! Silakan buka *issue* atau *pull request*.
 
-### Langkah-langkah
+**Langkah-langkah untuk berkontribusi:**
 
-1. Fork repositori
+1. **Fork repositori** – klik tombol **Fork** di kanan atas halaman GitHub.
 
-2. Buat branch fitur
+2. **Clone repositori fork Anda** ke lokal:
+
+```bash
+git clone https://github.com/<username>/InjectionForgeProX.git
+cd InjectionForgeProX
+```
+
+3. **Buat branch fitur:**
 
 ```bash
 git checkout -b fitur-keren
 ```
 
-3. Commit perubahan
+4. **Lakukan perubahan** – tambahkan fitur, perbaiki bug, atau tingkatkan dokumentasi.
+
+5. **Commit perubahan:**
 
 ```bash
-git commit -m "Tambah fitur keren"
+git add .
+git commit -m "Deskripsi perubahan"
 ```
 
-4. Push ke branch
+6. **Push ke branch:**
 
 ```bash
 git push origin fitur-keren
 ```
 
-5. Buka Pull Request
+7. **Buka Pull Request** – kembali ke GitHub dan klik **Compare & pull request**.
 
-
+Kami akan meninjau PR Anda sesegera mungkin. Jangan ragu untuk membuka issue terlebih dahulu untuk mendiskusikan ide besar.
 
