@@ -87,6 +87,8 @@ Contoh penggunaan:
     parser.add_argument("--multi-stage", action="store_true", help="Serangan 2‑langkah (priming + exploitation)")
     parser.add_argument("--history", help="File JSON conversation history")
     parser.add_argument("--audit", action="store_true", help="Mode audit: payload bisnis tanpa mutasi")
+    parser.add_argument("--attack-tree", action="store_true", help="Gunakan attack tree multi‑turn adaptif")
+    parser.add_argument("--max-depth", type=int, default=2, help="Kedalaman maksimum attack tree")
 
     # Output
     parser.add_argument("--output", help="File laporan (default: reports/report.json)")
@@ -111,6 +113,7 @@ Contoh penggunaan:
 
     # Keamanan koneksi
     parser.add_argument("--insecure", action="store_true", help="Nonaktifkan verifikasi SSL (hanya untuk testing internal yang sah!)")
+    parser.add_argument("--llm-judge", help="URL Ollama untuk LLM judge (contoh: http://localhost:11434)")
 
     args = parser.parse_args()
 
@@ -261,11 +264,12 @@ Contoh penggunaan:
     except Exception as e:
         sys.exit(f"[!] Payload error: {e}")
 
-    # Analyzer – gunakan parameter offline
+    # Analyzer – gunakan parameter offline dan LLM judge
     analyzer = SmartAnalyzer(
         pm.refusal,
         use_dual_model=not args.light,
-        offline=args.offline
+        offline=args.offline,
+        llm_judge_url=args.llm_judge
     )
 
     # History
@@ -274,15 +278,17 @@ Contoh penggunaan:
         with open(args.history) as f:
             history = json.load(f)
 
-    # Engine
+    # Engine – tambahkan attack tree
     engine = InjectionEngine(
         conn, pm, analyzer,
         stealth=args.stealth,
         delay=args.delay,
-        diff_mode=args.diff
+        diff_mode=args.diff,
+        attack_tree=args.attack_tree,
+        max_depth=args.max_depth
     )
 
-    # Run campaign – tambahkan audit
+    # Run campaign
     results = engine.run_campaign(
         rounds=args.rounds,
         category=args.category,

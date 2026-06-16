@@ -21,11 +21,14 @@ try:
 except ImportError:
     SELENIUM = False
 
+# Integrasi TLS fingerprint randomization
+from .tls_fingerprint import apply_ja3_to_session
+
 
 class WAFBypass:
     def __init__(self, bypass_type: str = "auto", tls_fingerprint: str = "random",
-                headless: bool = False, proxy: Optional[str] = None,
-                timeout: int = 30, insecure: bool = False):
+                 headless: bool = False, proxy: Optional[str] = None,
+                 timeout: int = 30, insecure: bool = False):
         self.type = bypass_type
         self.tls_fp = tls_fingerprint
         self.headless = headless
@@ -57,7 +60,7 @@ class WAFBypass:
             else:
                 raise ImportError("curl_cffi required for Akamai/TLS bypass.")
 
-        # default requests
+        # default requests session
         session = requests.Session()
         if self.proxy:
             session.proxies = {"http": self.proxy, "https": self.proxy}
@@ -68,15 +71,12 @@ class WAFBypass:
         return session
 
     def _create_curl_cffi_session(self):
-        fps = {
-            "chrome": "chrome110",
-            "firefox": "firefox102",
-            "safari": "safari15_5",
-            "random": random.choice(["chrome110", "firefox102", "safari15_5", "edge99"])
-        }
-        impersonate = fps.get(self.tls_fp, "chrome110")
+        """Membuat sesi curl_cffi dengan JA3 fingerprint randomization."""
+        if not CURL_CFFI:
+            raise ImportError("curl_cffi tidak tersedia")
         session = curl_requests.Session()
-        session.impersonate = impersonate
+        # Terapkan JA3 fingerprint sesuai pilihan pengguna (random/chrome/firefox/dll)
+        apply_ja3_to_session(session, self.tls_fp)
         if self.proxy:
             session.proxies = {"http": self.proxy, "https": self.proxy}
         if self.insecure:
