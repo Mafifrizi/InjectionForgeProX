@@ -47,7 +47,7 @@
 ## 📦 Instalasi
 
 ```bash
-git clone https://github.com/<username>/InjectionForgeProX.git
+git https://github.com/Mafifrizi/InjectionForgeProX.git
 cd InjectionForgeProX
 pip install -r requirements.txt
 playwright install   # hanya untuk mode headless
@@ -139,6 +139,7 @@ Laporan disimpan di folder `reports/`.
   "leaked_data": ["umkm-public-token-2025"],
   "severity": "High"
 }
+``` 
 
 ---
 
