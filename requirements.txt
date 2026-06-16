@@ -1,0 +1,13 @@
+requests
+sentence-transformers
+numpy
+pytest
+websocket-client
+sseclient-py
+colorama
+cloudscraper
+curl_cffi
+httpx
+wafw00f
+pysocks
+playwright

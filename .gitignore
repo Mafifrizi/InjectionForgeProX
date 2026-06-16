@@ -1,0 +1,30 @@
+@"
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Virtual env
+venv/
+.venv/
+
+# Output & log
+reports/
+*.log
+audit.log
+
+# Cache
+.pytest_cache/
+huggingface/
+
+# IDE
+.vscode/
+.idea/
+
+# Sensitif
+*.env
+*.key
+"@ | Out-File -FilePath .gitignore -Encoding utf8
