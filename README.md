@@ -1,4 +1,4 @@
-# 🧪 InjectionForge Pro X v3.4 – Full Spectrum Edition
+# 🧪 InjectionForge Pro X v1.0 – Full Spectrum Edition
 
 **Advanced AI Agent & Chatbot Prompt Injection Testing Framework**
 
