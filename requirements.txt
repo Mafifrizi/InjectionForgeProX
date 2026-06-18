@@ -11,3 +11,6 @@ httpx
 wafw00f
 pysocks
 playwright
+openai 
+reportlab
+openpyxl
