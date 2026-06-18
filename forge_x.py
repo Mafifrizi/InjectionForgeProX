@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import concurrent.futures
+import logging  # <-- TAMBAHAN
 from pathlib import Path
 
 from core.payloads import PayloadManager
@@ -19,7 +20,7 @@ from core.waf_bypass import WAFBypass, detect_waf
 from core.adaptive_agent import AdaptiveAgent
 from core.llm_generator import LLMGenerator
 from core.database import init_db, save_result
-from core.payload_engine import AIPayloadEngine   # PATCH
+from core.payload_engine import AIPayloadEngine
 
 
 def parse_headers(val):
@@ -264,6 +265,8 @@ Contoh penggunaan:
                 base_url=args.endpoint or "http://localhost:11434",
                 model=args.model or "llama3"
             )
+            # --- TAMBAHKAN INI: Aktifkan logging debug untuk konektor Ollama ---
+            logging.getLogger("InjectionForgeX.Ollama").setLevel(logging.DEBUG)
         else:  # huggingface
             key = args.api_key or os.environ.get("HF_TOKEN")
             from core.connectors.huggingface import HuggingFaceConnector
@@ -398,6 +401,7 @@ Contoh penggunaan:
         workers=args.workers
     )
 
+    print(f"[*] Memulai kampanye {args.rounds} round ke {args.target}...")
     results = engine.run_campaign(
         rounds=args.rounds,
         category=args.category,
