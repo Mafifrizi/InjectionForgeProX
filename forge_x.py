@@ -2,6 +2,7 @@ import argparse
 import sys
 import os
 import json
+import concurrent.futures
 from pathlib import Path
 
 from core.payloads import PayloadManager
@@ -18,26 +19,23 @@ from core.waf_bypass import WAFBypass, detect_waf
 from core.adaptive_agent import AdaptiveAgent
 from core.llm_generator import LLMGenerator
 from core.database import init_db, save_result
+from core.payload_engine import AIPayloadEngine   # PATCH
 
 
 def parse_headers(val):
     if not val:
         return {}
     cleaned = val.strip()
-    # Jika diapit kurung kurawal, buang
     if cleaned.startswith("{") and cleaned.endswith("}"):
         cleaned = cleaned[1:-1].strip()
-    # 1) Coba parse sebagai JSON murni
     try:
         return json.loads(val)
     except (json.JSONDecodeError, ValueError):
         pass
-    # 2) Coba parse dengan menambahkan kurung kurawal (untuk escaped quotes)
     try:
         return json.loads("{" + cleaned + "}")
     except (json.JSONDecodeError, ValueError):
         pass
-    # 3) Fallback: format "Key:Value" atau "Key=Value", dipisah koma
     result = {}
     for pair in cleaned.split(","):
         pair = pair.strip()
@@ -85,8 +83,11 @@ Contoh penggunaan:
   # WAF bypass
   python forge_x.py --target custom --endpoint "https://protected.umkm.com/api/chat" --bypass-waf auto --tls-fingerprint random --stealth --aggressive --rounds 20
 
-  # Adaptive agent multi‑turn dengan auto‑profiling (dan header custom)
+  # Adaptive agent multi‑turn dengan auto‑profiling
   python forge_x.py --target custom --endpoint "http://127.0.0.1:5000/v1/chat" --adaptive-agent --rounds 10 --headers "X-API-Key:masta-dev-123"
+
+  # AI‑generated payloads + multi‑threading (menggunakan worker bawaan engine)
+  python forge_x.py --target custom --endpoint "https://api.umkm.com/chat" --ai-payloads --workers 4 --rounds 20 --format json
         """
     )
 
@@ -123,6 +124,7 @@ Contoh penggunaan:
     parser.add_argument("--attack-tree", action="store_true", help="Gunakan attack tree multi‑turn adaptif")
     parser.add_argument("--max-depth", type=int, default=2, help="Kedalaman maksimum attack tree")
     parser.add_argument("--workers", type=int, default=4, help="Jumlah thread untuk multi-threading")
+    parser.add_argument("--ai-payloads", action="store_true", help="Gunakan AIPayloadEngine (LLM lokal) untuk generate payload tambahan")
 
     # Fitur baru: Adaptive Agent & LLM Generator
     parser.add_argument("--adaptive-agent", action="store_true", help="Gunakan adaptive multi‑turn agent dengan auto‑profiling")
@@ -154,8 +156,6 @@ Contoh penggunaan:
     parser.add_argument("--llm-judge", help="URL Ollama untuk LLM judge (contoh: http://localhost:11434)")
 
     args = parser.parse_args()
-
-    # Inisialisasi database
     init_db()
 
     # Validasi analyzer
@@ -211,7 +211,7 @@ Contoh penggunaan:
             insecure=args.insecure
         )
 
-    # Profiling (auto-profile default, hanya untuk target auto/custom/graphql)
+    # Profiling
     if args.auto_profile and args.target in ("auto", "custom", "graphql"):
         profiler = TargetProfiler(args.endpoint, args.method, parse_headers(args.headers), insecure=args.insecure)
         profile = profiler.profile
@@ -274,45 +274,49 @@ Contoh penggunaan:
     else:
         if args.method.upper() == "WS":
             from core.connectors.websocket import WebSocketConnector
-            conn = WebSocketConnector(
-                endpoint=args.endpoint,
-                timeout=args.timeout
-            )
+            conn = WebSocketConnector(endpoint=args.endpoint, timeout=args.timeout)
         else:
             from core.connectors.rest import RESTChatbotConnector
             conn = RESTChatbotConnector(
-                endpoint=args.endpoint,
-                method=args.method,
-                api_key=args.api_key,
-                headers=parse_headers(args.headers),
-                cookie=args.cookie,
-                json_path=args.json_path,
-                form_data=args.form,
-                csrf_token_url=args.csrf_token,
-                auth_endpoint=args.auth_endpoint,
-                auth_data=parse_auth_data(args.auth_data),
-                proxy=args.proxy,
-                stealth=args.stealth,
-                delay=args.delay,
-                timeout=args.timeout,
-                waf_session=waf_session,
-                verify_ssl=not args.insecure
+                endpoint=args.endpoint, method=args.method, api_key=args.api_key,
+                headers=parse_headers(args.headers), cookie=args.cookie,
+                json_path=args.json_path, form_data=args.form,
+                csrf_token_url=args.csrf_token, auth_endpoint=args.auth_endpoint,
+                auth_data=parse_auth_data(args.auth_data), proxy=args.proxy,
+                stealth=args.stealth, delay=args.delay, timeout=args.timeout,
+                waf_session=waf_session, verify_ssl=not args.insecure
             )
 
-    # Payload manager
     try:
         pm = PayloadManager()
     except Exception as e:
         sys.exit(f"[!] Payload error: {e}")
 
+    # Inisialisasi AIPayloadEngine jika diminta
+    ai_engine = None
+    if args.ai_payloads:
+        ai_engine = AIPayloadEngine(
+            db_path="data/payloads.db",
+            ollama_url=args.llm_judge or "http://localhost:11434"
+        )
+        print("[*] AIPayloadEngine aktif – akan generate payload AI.")
+
     # =========================================================
-    # FITUR BARU: Adaptive Agent dengan LLM Generator + LLM Judge
+    # Adaptive Agent (dengan kemungkinan override generator)
     # =========================================================
     if args.adaptive_agent:
         from core.adaptive_agent import AdaptiveAgent
         from core.llm_generator import LLMGenerator
 
         llm_gen = LLMGenerator()
+        if ai_engine:
+            class AIWrapper:
+                def generate(self, prompt, **kwargs):
+                    desc = args.target_description or "generic target"
+                    return ai_engine.generate(desc, context=None, n=1)[0]
+            llm_gen = AIWrapper()
+            print("[*] Adaptive Agent akan menggunakan AIPayloadEngine untuk payload.")
+
         adaptive_analyzer = SmartAnalyzer(
             pm.refusal,
             use_dual_model=False,
@@ -321,7 +325,6 @@ Contoh penggunaan:
         )
         agent = AdaptiveAgent(conn, adaptive_analyzer, llm_gen=llm_gen)
 
-        # AUTO-PROFILING jika deskripsi tidak diberikan
         if not args.target_description:
             print("[*] Auto-profiling target...")
             auto_desc = agent.auto_profile()
@@ -331,12 +334,21 @@ Contoh penggunaan:
             print(f"[*] Menggunakan deskripsi manual: {args.target_description}")
 
         print(f"[*] Adaptive Agent aktif. Target: {agent.target_description}")
-        print(f"[*] LLM Judge: {adaptive_analyzer.llm_judge_url}")
         results = agent.run_adaptive_session(max_turns=args.rounds)
 
         success = sum(1 for r in results if r["success"])
         total = len(results)
         print(f"\n[Summary] {success}/{total} sukses ({(success/total)*100:.1f}%)" if total else "\n[Summary] No results")
+
+        if ai_engine:
+            for r in results:
+                if r["success"]:
+                    ai_engine.record_success(
+                        target_description=args.target_description or "adaptive_session",
+                        payload=r["payload"],
+                        leak_category=r.get("leak_category", "unknown"),
+                        severity=r.get("severity", "Medium")
+                    )
 
         for i, r in enumerate(results, 1):
             status = "✅" if r["success"] else "❌"
@@ -344,20 +356,21 @@ Contoh penggunaan:
             sev = r.get("severity", "Info")
             print(f"  Turn {i} [{r['strategy']}]: {r['payload'][:80]}... -> {status} {cat}/{sev}")
 
+        out = args.output or f"reports/adaptive_report.{args.format if args.format != 'term' else 'json'}"
         if args.format == "json":
-            generate_json_report(results, args.output or "reports/adaptive_report.json")
+            generate_json_report(results, out)
         elif args.format == "html":
-            generate_html_report(results, args.output or "reports/adaptive_report.html")
+            generate_html_report(results, out)
         elif args.format == "csv":
-            generate_csv_report(results, args.output or "reports/adaptive_report.csv")
+            generate_csv_report(results, out)
         elif args.format == "pdf":
-            generate_pdf_report(results, args.output or "reports/adaptive_report.pdf")
+            generate_pdf_report(results, out)
         elif args.format == "xlsx":
-            generate_xlsx_report(results, args.output or "reports/adaptive_report.xlsx")
+            generate_xlsx_report(results, out)
         elif args.format == "term":
             print_colored_summary(results)
             generate_json_report(results, "reports/adaptive_report.json")
-        print(f"[Report] Laporan disimpan di {args.output or 'reports/adaptive_report.json'}")
+        print(f"[Report] Laporan disimpan di {out}")
         return
 
     # =========================================================
@@ -381,7 +394,8 @@ Contoh penggunaan:
         delay=args.delay,
         diff_mode=args.diff,
         attack_tree=args.attack_tree,
-        max_depth=args.max_depth
+        max_depth=args.max_depth,
+        workers=args.workers
     )
 
     results = engine.run_campaign(
@@ -396,8 +410,78 @@ Contoh penggunaan:
         target_endpoint=args.endpoint
     )
 
+    # ========== PATCH: AI Payloads (tambahan) ==========
+    if ai_engine and args.target_description:
+        print("[*] Menghasilkan payload AI tambahan...")
+        ai_payloads = ai_engine.generate(
+            target_description=args.target_description,
+            context=None,
+            n=args.rounds
+        )
+        print(f"[*] Mendapat {len(ai_payloads)} payload AI. Mengirim...")
+
+        # Fungsi kirim & analisis (sesuai API connector & analyzer sebenarnya)
+        def process_ai_payload(payload):
+            try:
+                resp = conn.send(payload, [])  # history kosong
+                analysis = analyzer.analyze(payload, resp)
+                success = analysis.get("success", False)
+                return {
+                    "round": -1,  # akan di‑assign nanti
+                    "payload": payload,
+                    "response": resp,
+                    "success": success,
+                    "confidence": analysis.get("confidence", 0.0),
+                    "method": "ai_generated",
+                    "leaked_data": analysis.get("leaked_data", []),
+                    "diff": "",
+                    "severity": analysis.get("severity", "Info")
+                }
+            except Exception as e:
+                return {
+                    "round": -1,
+                    "payload": payload,
+                    "response": str(e),
+                    "success": False,
+                    "confidence": 0.0,
+                    "method": "ai_generated",
+                    "leaked_data": [],
+                    "diff": "",
+                    "severity": "Info"
+                }
+
+        ai_results = []
+        if args.workers > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+                futures = [executor.submit(process_ai_payload, p) for p in ai_payloads]
+                for future in concurrent.futures.as_completed(futures):
+                    ai_results.append(future.result())
+        else:
+            for p in ai_payloads:
+                ai_results.append(process_ai_payload(p))
+
+        # Beri nomor round yang unik (melanjutkan hasil utama)
+        next_round = len(results) + 1
+        for r in ai_results:
+            r["round"] = next_round
+            next_round += 1
+        results.extend(ai_results)
+
+        # Simpan payload sukses ke AI database
+        for r in ai_results:
+            if r["success"]:
+                ai_engine.record_success(
+                    target_description=args.target_description,
+                    payload=r["payload"],
+                    leak_category="ai_injection",
+                    severity=r.get("severity", "Medium")
+                )
+        print(f"[*] {len(ai_results)} payload AI selesai diproses.")
+
+    # Summary
     success = sum(1 for r in results if r["success"])
-    print(f"\n[Summary] {success}/{args.rounds} sukses ({success/args.rounds*100:.1f}%)")
+    total = len(results)
+    print(f"\n[Summary] {success}/{total} sukses ({success/total*100:.1f}%)" if total else "\n[Summary] No results")
 
     if not args.output:
         ext = {"json": "json", "html": "html", "csv": "csv", "pdf": "pdf", "xlsx": "xlsx", "term": "json"}[args.format]

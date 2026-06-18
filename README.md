@@ -2,7 +2,7 @@
 
 **Advanced AI Agent & Chatbot Prompt Injection Testing Framework**
 
-[![Tests](https://img.shields.io/badge/tests-30%20test%20functions-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-20%20test%20functions-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.0-orange)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
@@ -71,7 +71,7 @@ Jalankan `python forge_x.py --help` untuk melihat semua opsi. Berikut ringkasan 
 | `--max-depth` | Kedalaman maksimum attack tree | `--max-depth 3` |
 | `--workers` | Jumlah thread untuk eksekusi paralel | `--workers 8` |
 | `--llm-judge` | URL Ollama untuk LLM judge (contoh: `http://localhost:11434`) | `--llm-judge http://localhost:11434` |
-| `--adaptive-agent` | Jalankan adaptive multi‑turn agent dengan auto‑profiling (lihat [bagian terpisah](#-adaptive-agent-auto-profiling--ai-payload-generation)) | `--adaptive-agent` |
+| `--adaptive-agent` | Jalankan adaptive multi‑turn agent dengan auto‑profiling | `--adaptive-agent` |
 | `--target-description` | Deskripsi target untuk agent. Jika kosong, di‑generate otomatis dari `auto_profile()` | `--target-description "chatbot UMKM"` |
 
 ### 🛡️ WAF & Stealth
@@ -148,9 +148,6 @@ Contoh:
 python forge_x.py --target custom --endpoint "https://api.umkm.com/chat" \
   --json-path "reply" --adaptive-agent --rounds 15
 ```
-
-> ⚠️ **Catatan keterbatasan dokumentasi:** ada juga `core/payload_engine.py` (`AIPayloadEngine`, nyimpen payload sukses ke `data/payloads.db`) dan `core/execution_engine.py` (`ExecutionEngine`, eksekusi paralel + rate‑limit + retry). Per pengecekan kode terbaru, **kedua modul ini belum dipanggil dari `forge_x.py` atau modul lain manapun** — jadi statusnya masih *standalone/belum terintegrasi* ke pipeline CLI, bukan fitur aktif. Jangan didokumentasikan sebagai fitur yang bisa dipakai lewat CLI sampai benar-benar di-wire.
-
 ---
 
 Tool telah diuji dengan dataset berlabel 100 entri (`data/benchmark.json`) dan mencapai:
