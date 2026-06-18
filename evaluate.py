@@ -28,4 +28,4 @@ f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 e
 
 print(f"Precision: {precision:.1%}")
 print(f"Recall: {recall:.1%}")
-print(f"F1 Score: {f1:.1%}")
+print(f"F1 Score: {f1:.1%}")  
