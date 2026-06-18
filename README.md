@@ -2,7 +2,7 @@
 
 **Advanced AI Agent & Chatbot Prompt Injection Testing Framework**
 
-[![Tests](https://img.shields.io/badge/tests-15%2F15%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-30%20test%20functions-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.0-orange)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
@@ -13,6 +13,7 @@
 
 - [Fitur Utama](#-fitur-utama)
 - [Fitur Advanced (v1.0)](#-fitur-advanced-v10)
+- [Adaptive Agent (Auto‑Profiling + AI Payload Generation)](#-adaptive-agent-auto-profiling--ai-payload-generation)
 - [Validasi & Benchmark](#-validasi--benchmark)
 - [Instalasi](#-instalasi)
 - [Validasi Analyzer](#-validasi-analyzer)
@@ -46,6 +47,14 @@ Jalankan `python forge_x.py --help` untuk melihat semua opsi. Berikut ringkasan 
 | `--json-path` | Jalur ke teks respons (contoh: `data.reply`) | `--json-path "data.text"` |
 | `--form` | Kirim sebagai form‑encoded | `--form` |
 | `--timeout` | Timeout request (detik) | `--timeout 30` |
+| `--api-key` | API key untuk vendor LLM (`openai`, `claude`, `gemini`, `cohere`) | `--api-key sk-xxx` |
+| `--model` | Nama model (untuk `ollama`/`huggingface`) | `--model llama3` |
+| `--csrf-token` | URL untuk ambil CSRF token, atau token statis | `--csrf-token https://x.com/csrf` |
+| `--auth-endpoint` | URL untuk ambil auth token | `--auth-endpoint https://x.com/auth` |
+| `--auth-data` | Data untuk auth request (JSON atau `key=val`) | `--auth-data "user=a,pass=b"` |
+| `--login` | URL form login untuk auto‑login | `--login https://x.com/login` |
+| `--username` | Username untuk login | `--username admin` |
+| `--password` | Password untuk login | `--password ****` |
 
 ### 🧠 Payload & Serangan
 | Flag | Deskripsi | Contoh |
@@ -57,9 +66,13 @@ Jalankan `python forge_x.py --help` untuk melihat semua opsi. Berikut ringkasan 
 | `--audit` | Mode audit: payload bisnis tanpa mutasi | `--audit` |
 | `--adaptive` | Payload adaptif berdasarkan bobot keberhasilan | `--adaptive` |
 | `--multi-stage` | Serangan 2‑langkah (priming + exploitation) | `--multi-stage` |
+| `--history` | File JSON conversation history | `--history convo.json` |
 | `--attack-tree` | Gunakan attack tree multi‑turn adaptif | `--attack-tree` |
 | `--max-depth` | Kedalaman maksimum attack tree | `--max-depth 3` |
+| `--workers` | Jumlah thread untuk eksekusi paralel | `--workers 8` |
 | `--llm-judge` | URL Ollama untuk LLM judge (contoh: `http://localhost:11434`) | `--llm-judge http://localhost:11434` |
+| `--adaptive-agent` | Jalankan adaptive multi‑turn agent dengan auto‑profiling (lihat [bagian terpisah](#-adaptive-agent-auto-profiling--ai-payload-generation)) | `--adaptive-agent` |
+| `--target-description` | Deskripsi target untuk agent. Jika kosong, di‑generate otomatis dari `auto_profile()` | `--target-description "chatbot UMKM"` |
 
 ### 🛡️ WAF & Stealth
 | Flag | Deskripsi | Contoh |
@@ -83,7 +96,7 @@ Jalankan `python forge_x.py --help` untuk melihat semua opsi. Berikut ringkasan 
 ### 📊 Output
 | Flag | Deskripsi | Contoh |
 |------|-----------|--------|
-| `--format` | `json`, `html`, `csv`, `term` | `--format html` |
+| `--format` | `json`, `html`, `csv`, `pdf`, `xlsx`, `term` | `--format html` |
 | `--output` | File laporan (default: `reports/report.json`) | `--output audit.html` |
 | `--diff` | Bandingkan respons dengan baseline (prompt netral) | `--diff` |
 
@@ -108,8 +121,9 @@ Framework ini menyediakan fondasi yang solid untuk pengujian keamanan prompt inj
 - 🔎 **Auto‑discovery** – Mencari endpoint chat dari halaman web.
 - 🔐 **Auto‑login** – Dukungan login form & session management.
 - 📊 **Audit mode** – Fokus pada logika bisnis (error handling, input validation).
-- 📄 **Output multi‑format** – JSON, HTML, CSV, terminal berwarna.
-- 🧪 **15 unit test** – Memvalidasi komponen inti.
+- 📄 **Output multi‑format** – JSON, HTML, CSV, PDF, XLSX, terminal berwarna.
+- 💾 **Logging ke SQLite** – Tiap hasil campaign otomatis disimpan ke `injectionforge_results.db` (`core/database.py`) selain ke file report.
+- 🧪 **30 fungsi unit test** di 10 file (`tests/`) – Memvalidasi komponen inti.
 
 ---
 
@@ -121,7 +135,23 @@ Framework ini menyediakan fondasi yang solid untuk pengujian keamanan prompt inj
 
 ---
 
-## 🔬 Validasi & Benchmark
+## 🤖 Adaptive Agent (Auto‑Profiling + AI Payload Generation)
+
+Diaktifkan dengan flag `--adaptive-agent`. Berbeda dari `--attack-tree` (yang pakai payload statis berdasarkan struktur pohon), mode ini memakai dua modul baru di `core/`:
+
+- **`core/adaptive_agent.py` (`AdaptiveAgent`)** – Punya `auto_profile()`: kirim 3 pertanyaan pemancing ke target (nama, kepribadian, potensi titik lemah), lalu hasil jawabannya dikirim ke LLM lokal (Ollama) untuk disimpulkan jadi satu kalimat `target_description`. Deskripsi ini juga bisa diisi manual lewat `--target-description` supaya tidak perlu profiling ulang. Kelas ini juga punya daftar `static_payloads` (system‑prompt extraction, debug/developer‑mode trigger, dll.) yang dipakai jika generator AI gagal/tidak tersedia.
+- **`core/llm_generator.py` (`LLMGenerator`)** – Memanggil endpoint `/api/generate` Ollama dengan salah satu strategi (`roleplay`, `sidestep`, `chain_of_thought`, `debug_request`, `code_example`, `reveal_internal`) untuk membuat payload baru yang disesuaikan dengan `target_description` dari `AdaptiveAgent`.
+
+Contoh:
+
+```bash
+python forge_x.py --target custom --endpoint "https://api.umkm.com/chat" \
+  --json-path "reply" --adaptive-agent --rounds 15
+```
+
+> ⚠️ **Catatan keterbatasan dokumentasi:** ada juga `core/payload_engine.py` (`AIPayloadEngine`, nyimpen payload sukses ke `data/payloads.db`) dan `core/execution_engine.py` (`ExecutionEngine`, eksekusi paralel + rate‑limit + retry). Per pengecekan kode terbaru, **kedua modul ini belum dipanggil dari `forge_x.py` atau modul lain manapun** — jadi statusnya masih *standalone/belum terintegrasi* ke pipeline CLI, bukan fitur aktif. Jangan didokumentasikan sebagai fitur yang bisa dipakai lewat CLI sampai benar-benar di-wire.
+
+---
 
 Tool telah diuji dengan dataset berlabel 100 entri (`data/benchmark.json`) dan mencapai:
 
@@ -287,6 +317,11 @@ InjectionForgeProX/
 ├── core/
 │   ├── __init__.py
 │   ├── engine.py
+│   ├── adaptive_agent.py        
+│   ├── llm_generator.py         
+│   ├── database.py              
+│   ├── payload_engine.py        
+│   ├── execution_engine.py      
 │   ├── payloads.py
 │   ├── payload_generator.py
 │   ├── obfuscator.py
@@ -327,10 +362,15 @@ InjectionForgeProX/
 │   └── user_agents.txt
 │
 ├── tests/
-│   ├── test_analyzer.py
+│   ├── tests_analyzer.py
+│   ├── tests_payloads.py
+│   ├── tests_reporter.py
+│   ├── test_adaptive_agent.py
+│   ├── test_llm_generator.py
 │   ├── test_payload_manager.py
 │   ├── test_obfuscator.py
 │   ├── test_connectors.py
+│   ├── test_rest_connector.py
 │   └── test_integration.py
 │
 └── reports/                    
@@ -377,4 +417,3 @@ git push origin fitur-keren
 7. **Buka Pull Request** – kembali ke GitHub dan klik **Compare & pull request**.
 
 Saya akan meninjau PR Anda sesegera mungkin. Jangan ragu untuk membuka issue terlebih dahulu untuk mendiskusikan ide besar.
-

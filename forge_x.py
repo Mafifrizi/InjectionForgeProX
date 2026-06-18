@@ -9,20 +9,50 @@ from core.analyzer import SmartAnalyzer
 from core.engine import InjectionEngine
 from core.validator import validate_analyzer
 from core.reporter import (generate_json_report, generate_html_report,
-                           generate_csv_report, print_colored_summary)
+                           generate_csv_report, generate_pdf_report,
+                           generate_xlsx_report, print_colored_summary)
 from core.profiler import TargetProfiler
 from core.auth import session_login
 from core.auto_discovery import discover_endpoint
 from core.waf_bypass import WAFBypass, detect_waf
+from core.adaptive_agent import AdaptiveAgent
+from core.llm_generator import LLMGenerator
+from core.database import init_db, save_result
 
 
 def parse_headers(val):
     if not val:
         return {}
+    cleaned = val.strip()
+    # Jika diapit kurung kurawal, buang
+    if cleaned.startswith("{") and cleaned.endswith("}"):
+        cleaned = cleaned[1:-1].strip()
+    # 1) Coba parse sebagai JSON murni
     try:
         return json.loads(val)
-    except json.JSONDecodeError:
-        return dict(kv.split(":") for kv in val.split(",") if ":" in kv)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # 2) Coba parse dengan menambahkan kurung kurawal (untuk escaped quotes)
+    try:
+        return json.loads("{" + cleaned + "}")
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # 3) Fallback: format "Key:Value" atau "Key=Value", dipisah koma
+    result = {}
+    for pair in cleaned.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if ":" in pair:
+            k, v = pair.split(":", 1)
+        elif "=" in pair:
+            k, v = pair.split("=", 1)
+        else:
+            continue
+        k = k.strip().strip("'\"")
+        v = v.strip().strip("'\"")
+        result[k] = v
+    return result
 
 
 def parse_auth_data(val):
@@ -30,7 +60,7 @@ def parse_auth_data(val):
         return None
     try:
         return json.loads(val)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         return dict(kv.split("=") for kv in val.split(",") if "=" in kv)
 
 
@@ -54,6 +84,9 @@ Contoh penggunaan:
 
   # WAF bypass
   python forge_x.py --target custom --endpoint "https://protected.umkm.com/api/chat" --bypass-waf auto --tls-fingerprint random --stealth --aggressive --rounds 20
+
+  # Adaptive agent multi‑turn dengan auto‑profiling (dan header custom)
+  python forge_x.py --target custom --endpoint "http://127.0.0.1:5000/v1/chat" --adaptive-agent --rounds 10 --headers "X-API-Key:masta-dev-123"
         """
     )
 
@@ -63,7 +96,7 @@ Contoh penggunaan:
     parser.add_argument("--endpoint", help="URL endpoint API/chat")
     parser.add_argument("--api-key", help="API key (untuk vendor LLM)")
     parser.add_argument("--model", help="Nama model (untuk Ollama/Hugging Face)")
-    parser.add_argument("--headers", help='Header tambahan (JSON atau "Key:Val,Key:Val")')
+    parser.add_argument("--headers", help='Header tambahan. Format: JSON \'{"Key":"Val"}\' atau "Key:Val,Key:Val"')
     parser.add_argument("--cookie", help="Cookie string atau file")
     parser.add_argument("--json-path", help="Jalur ke teks respons (contoh: data.reply)")
     parser.add_argument("--form", action="store_true", help="Kirim sebagai form-urlencoded")
@@ -89,10 +122,15 @@ Contoh penggunaan:
     parser.add_argument("--audit", action="store_true", help="Mode audit: payload bisnis tanpa mutasi")
     parser.add_argument("--attack-tree", action="store_true", help="Gunakan attack tree multi‑turn adaptif")
     parser.add_argument("--max-depth", type=int, default=2, help="Kedalaman maksimum attack tree")
+    parser.add_argument("--workers", type=int, default=4, help="Jumlah thread untuk multi-threading")
+
+    # Fitur baru: Adaptive Agent & LLM Generator
+    parser.add_argument("--adaptive-agent", action="store_true", help="Gunakan adaptive multi‑turn agent dengan auto‑profiling")
+    parser.add_argument("--target-description", help="Deskripsi target opsional. Jika dikosongkan, akan diisi otomatis.")
 
     # Output
     parser.add_argument("--output", help="File laporan (default: reports/report.json)")
-    parser.add_argument("--format", choices=["json","html","csv","term"], default="json", help="Format laporan")
+    parser.add_argument("--format", choices=["json","html","csv","pdf","xlsx","term"], default="json", help="Format laporan")
     parser.add_argument("--diff", action="store_true", help="Bandingkan respons dengan baseline (prompt netral)")
 
     # Validasi
@@ -116,6 +154,9 @@ Contoh penggunaan:
     parser.add_argument("--llm-judge", help="URL Ollama untuk LLM judge (contoh: http://localhost:11434)")
 
     args = parser.parse_args()
+
+    # Inisialisasi database
+    init_db()
 
     # Validasi analyzer
     if args.validate:
@@ -264,7 +305,64 @@ Contoh penggunaan:
     except Exception as e:
         sys.exit(f"[!] Payload error: {e}")
 
-    # Analyzer – gunakan parameter offline dan LLM judge
+    # =========================================================
+    # FITUR BARU: Adaptive Agent dengan LLM Generator + LLM Judge
+    # =========================================================
+    if args.adaptive_agent:
+        from core.adaptive_agent import AdaptiveAgent
+        from core.llm_generator import LLMGenerator
+
+        llm_gen = LLMGenerator()
+        adaptive_analyzer = SmartAnalyzer(
+            pm.refusal,
+            use_dual_model=False,
+            offline=True,
+            llm_judge_url=args.llm_judge or "http://localhost:11434"
+        )
+        agent = AdaptiveAgent(conn, adaptive_analyzer, llm_gen=llm_gen)
+
+        # AUTO-PROFILING jika deskripsi tidak diberikan
+        if not args.target_description:
+            print("[*] Auto-profiling target...")
+            auto_desc = agent.auto_profile()
+            print(f"[*] Profil otomatis: {auto_desc[:100]}...")
+        else:
+            agent.target_description = args.target_description
+            print(f"[*] Menggunakan deskripsi manual: {args.target_description}")
+
+        print(f"[*] Adaptive Agent aktif. Target: {agent.target_description}")
+        print(f"[*] LLM Judge: {adaptive_analyzer.llm_judge_url}")
+        results = agent.run_adaptive_session(max_turns=args.rounds)
+
+        success = sum(1 for r in results if r["success"])
+        total = len(results)
+        print(f"\n[Summary] {success}/{total} sukses ({(success/total)*100:.1f}%)" if total else "\n[Summary] No results")
+
+        for i, r in enumerate(results, 1):
+            status = "✅" if r["success"] else "❌"
+            cat = r.get("leak_category", "")
+            sev = r.get("severity", "Info")
+            print(f"  Turn {i} [{r['strategy']}]: {r['payload'][:80]}... -> {status} {cat}/{sev}")
+
+        if args.format == "json":
+            generate_json_report(results, args.output or "reports/adaptive_report.json")
+        elif args.format == "html":
+            generate_html_report(results, args.output or "reports/adaptive_report.html")
+        elif args.format == "csv":
+            generate_csv_report(results, args.output or "reports/adaptive_report.csv")
+        elif args.format == "pdf":
+            generate_pdf_report(results, args.output or "reports/adaptive_report.pdf")
+        elif args.format == "xlsx":
+            generate_xlsx_report(results, args.output or "reports/adaptive_report.xlsx")
+        elif args.format == "term":
+            print_colored_summary(results)
+            generate_json_report(results, "reports/adaptive_report.json")
+        print(f"[Report] Laporan disimpan di {args.output or 'reports/adaptive_report.json'}")
+        return
+
+    # =========================================================
+    # MODE NORMAL: InjectionEngine
+    # =========================================================
     analyzer = SmartAnalyzer(
         pm.refusal,
         use_dual_model=not args.light,
@@ -272,13 +370,11 @@ Contoh penggunaan:
         llm_judge_url=args.llm_judge
     )
 
-    # History
     history = None
     if args.history:
         with open(args.history) as f:
             history = json.load(f)
 
-    # Engine – tambahkan attack tree
     engine = InjectionEngine(
         conn, pm, analyzer,
         stealth=args.stealth,
@@ -288,7 +384,6 @@ Contoh penggunaan:
         max_depth=args.max_depth
     )
 
-    # Run campaign
     results = engine.run_campaign(
         rounds=args.rounds,
         category=args.category,
@@ -297,16 +392,15 @@ Contoh penggunaan:
         adaptive=args.adaptive,
         history=history,
         multi_stage=args.multi_stage,
-        audit=args.audit
+        audit=args.audit,
+        target_endpoint=args.endpoint
     )
 
-    # Ringkasan
     success = sum(1 for r in results if r["success"])
     print(f"\n[Summary] {success}/{args.rounds} sukses ({success/args.rounds*100:.1f}%)")
 
-    # Output
     if not args.output:
-        ext = {"json": "json", "html": "html", "csv": "csv", "term": "json"}[args.format]
+        ext = {"json": "json", "html": "html", "csv": "csv", "pdf": "pdf", "xlsx": "xlsx", "term": "json"}[args.format]
         out = f"reports/report.{ext}"
     else:
         out = args.output
@@ -317,6 +411,10 @@ Contoh penggunaan:
         generate_html_report(results, out)
     elif args.format == "csv":
         generate_csv_report(results, out)
+    elif args.format == "pdf":
+        generate_pdf_report(results, out)
+    elif args.format == "xlsx":
+        generate_xlsx_report(results, out)
     elif args.format == "term":
         print_colored_summary(results)
         generate_json_report(results, "reports/report.json")

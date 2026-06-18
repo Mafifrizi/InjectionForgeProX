@@ -8,7 +8,6 @@ from typing import Dict, Optional, List
 from .base import BaseConnector
 from ..utils import load_user_agents, random_user_agent
 
-# matikan peringatan SSL jika verifikasi dimatikan
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -33,6 +32,7 @@ class RESTChatbotConnector(BaseConnector):
         self.endpoint = endpoint
         self.method = method.upper()
         self.api_key = api_key
+        # Simpan header persis seperti yang diberikan (jangan ubah case)
         self.base_headers = dict(headers or {})
         self.cookie = cookie
         self.json_path = json_path
@@ -104,6 +104,7 @@ class RESTChatbotConnector(BaseConnector):
             self.base_headers["X-CSRFToken"] = self._csrf_token
 
     def _build_headers(self):
+        """Bangun header dengan case sesuai aslinya."""
         headers = dict(self.base_headers)
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}" if not self.api_key.startswith("Bearer ") else self.api_key
@@ -149,10 +150,10 @@ class RESTChatbotConnector(BaseConnector):
         else:
             params = {"message": prompt}
 
-        # === LOGGING DEBUG ===
+        # Logging header untuk debugging
+        logger.info(f"Headers yang dikirim: {headers}")
         logger.info(f"PAYLOAD: {prompt[:80]}")
         logger.info(f"Mengirim {self.method} ke {self.endpoint}")
-        # =====================
 
         if self.stealth:
             time.sleep(self.delay * random.uniform(0.7, 1.3))
@@ -169,9 +170,7 @@ class RESTChatbotConnector(BaseConnector):
             r.raise_for_status()
             resp = r.text
 
-            # === LOG RESPONS ===
             logger.info(f"RESPONS: {resp[:100]}")
-            # ===================
 
             try:
                 resp_json = r.json()

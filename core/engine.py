@@ -1,11 +1,13 @@
 import time
 import random
 import logging
+import concurrent.futures
 import requests
 from .payloads import PayloadManager
 from .analyzer import SmartAnalyzer
 from .connectors.base import BaseConnector
 from .attack_tree import AttackTree, AttackNode
+from .database import save_result
 
 logger = logging.getLogger("InjectionForgeX")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -15,7 +17,8 @@ class InjectionEngine:
     def __init__(self, connector: BaseConnector, payload_mgr: PayloadManager,
                  analyzer: SmartAnalyzer, stealth: bool = False,
                  delay: float = 1.0, diff_mode: bool = False,
-                 attack_tree: bool = False, max_depth: int = 2):
+                 attack_tree: bool = False, max_depth: int = 2,
+                 workers: int = 4):
         self.connector = connector
         self.payload_mgr = payload_mgr
         self.analyzer = analyzer
@@ -24,11 +27,12 @@ class InjectionEngine:
         self.diff_mode = diff_mode
         self.attack_tree_mode = attack_tree
         self.max_depth = max_depth
+        self.workers = workers
         self.results = []
 
     def run_campaign(self, rounds=5, category="basic", mutate=False,
                      aggressive=False, adaptive=False, history=None,
-                     multi_stage=False, audit=False):
+                     multi_stage=False, audit=False, target_endpoint=""):
         # Jika mode attack tree, jalankan pohon serangan
         if self.attack_tree_mode:
             return self._run_attack_tree()
@@ -40,7 +44,7 @@ class InjectionEngine:
             except Exception:
                 pass
 
-        for i in range(rounds):
+        def execute_round(i):
             if multi_stage:
                 primer = self.payload_mgr.get_payload("advanced", mutate=True, aggressive=aggressive, audit=audit)
                 resp1 = self._safe_send(primer, history)
@@ -48,17 +52,17 @@ class InjectionEngine:
                 updated_history.append({"role": "user", "content": primer})
                 updated_history.append({"role": "assistant", "content": resp1})
                 payload = self.payload_mgr.get_payload(category, mutate=mutate,
-                                                    aggressive=aggressive, adaptive=adaptive, audit=audit)
+                                                       aggressive=aggressive, adaptive=adaptive, audit=audit)
                 response = self._safe_send(payload, updated_history)
             else:
                 payload = self.payload_mgr.get_payload(category, mutate=mutate,
-                                                    aggressive=aggressive, adaptive=adaptive, audit=audit)
+                                                       aggressive=aggressive, adaptive=adaptive, audit=audit)
                 response = self._safe_send(payload, history)
 
             analysis = self.analyzer.analyze(payload, response,
-                                            baseline_response=baseline_response)
+                                             baseline_response=baseline_response)
             self.payload_mgr.update_weights(category, analysis["success"])
-            self.results.append({
+            result = {
                 "round": i+1,
                 "payload": payload,
                 "response": response,
@@ -68,12 +72,23 @@ class InjectionEngine:
                 "leaked_data": analysis.get("leaked_data", []),
                 "diff": analysis.get("diff", ""),
                 "severity": analysis.get("severity", "Info")
-            })
-            logger.info(f"Round {i+1}: success={analysis['success']} conf={analysis['confidence']:.2f}")
-            if self.stealth:
-                time.sleep(self.delay * random.uniform(0.7, 1.3))
-            else:
-                time.sleep(0.8)
+            }
+            # Simpan ke database
+            try:
+                save_result(target_endpoint, result)
+            except:
+                pass
+            return result
+
+        # Multi-threading
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as executor:
+            futures = [executor.submit(execute_round, i) for i in range(rounds)]
+            for future in concurrent.futures.as_completed(futures):
+                self.results.append(future.result())
+                time.sleep(self.delay if self.stealth else 0.8)
+
+        # Urutkan hasil berdasarkan round
+        self.results.sort(key=lambda x: x["round"])
         return self.results
 
     def _run_attack_tree(self):
@@ -82,7 +97,6 @@ class InjectionEngine:
         tree.expand(tree.root)
         
         for i, path in enumerate(tree.success_paths):
-            # Ambil payload pertama dan terakhir sebagai representasi
             entry = {
                 "round": i+1,
                 "payload": " -> ".join(path),
@@ -98,7 +112,6 @@ class InjectionEngine:
             logger.info(f"Attack tree path {i+1}: {entry['payload']}")
         
         if not tree.success_paths:
-            # Catat bahwa tidak ada jalur yang berhasil
             self.results.append({
                 "round": 1,
                 "payload": "Attack tree (no success)",
