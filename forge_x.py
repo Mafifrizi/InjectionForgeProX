@@ -151,7 +151,7 @@ Contoh penggunaan:
     parser.add_argument("--redact", dest="redact", action=argparse.BooleanOptionalAction, default=True, help="Redact sensitive values in generated reports (default: enabled)")
 
     # Validasi
-    parser.add_argument("--validate", action="store_true", help="Self-test analyzer (presisi >= 95%)")
+    parser.add_argument("--validate", action="store_true", help="Self-test analyzer (presisi >= 95%%)")
     parser.add_argument("--light", action="store_true", help="Gunakan hanya satu model (lebih ringan)")
     parser.add_argument("--offline", action="store_true", help="Mode offline: tidak unduh model, hanya regex+refusal")
 
