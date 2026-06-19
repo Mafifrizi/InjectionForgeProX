@@ -18,7 +18,7 @@ class InjectionEngine:
                  analyzer: SmartAnalyzer, stealth: bool = False,
                  delay: float = 1.0, diff_mode: bool = False,
                  attack_tree: bool = False, max_depth: int = 2,
-                 workers: int = 4):
+                 workers: int = 4, language: str = "en"):
         self.connector = connector
         self.payload_mgr = payload_mgr
         self.analyzer = analyzer
@@ -28,6 +28,7 @@ class InjectionEngine:
         self.attack_tree_mode = attack_tree
         self.max_depth = max_depth
         self.workers = workers
+        self.language = language
         self.results = []
 
     def run_campaign(self, rounds=5, category="basic", mutate=False,
@@ -71,13 +72,18 @@ class InjectionEngine:
                 "method": analysis["method"],
                 "leaked_data": analysis.get("leaked_data", []),
                 "diff": analysis.get("diff", ""),
-                "severity": analysis.get("severity", "Info")
+                "severity": analysis.get("severity", "Info"),
+                "leak_category": analysis.get("leak_category", ""),
+                "analysis_mode": analysis.get("analysis_mode", getattr(self.analyzer, "analysis_mode", "balanced")),
+                "decision_reason": analysis.get("decision_reason", ""),
+                "evidence": analysis.get("evidence", []),
+                "language": analysis.get("language", self.language)
             }
             # Simpan ke database
             try:
                 save_result(target_endpoint, result)
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Gagal menyimpan hasil ke database: {e}")
             return result
 
         # Multi-threading
@@ -85,7 +91,8 @@ class InjectionEngine:
             futures = [executor.submit(execute_round, i) for i in range(rounds)]
             for future in concurrent.futures.as_completed(futures):
                 self.results.append(future.result())
-                time.sleep(self.delay if self.stealth else 0.8)
+                if self.stealth and self.delay > 0:
+                    time.sleep(self.delay)
 
         # Urutkan hasil berdasarkan round
         self.results.sort(key=lambda x: x["round"])
@@ -93,7 +100,7 @@ class InjectionEngine:
 
     def _run_attack_tree(self):
         """Jalankan attack tree dan kumpulkan hasil."""
-        tree = AttackTree(self.connector, max_depth=self.max_depth)
+        tree = AttackTree(self.connector, max_depth=self.max_depth, language=self.language)
         tree.expand(tree.root)
         
         for i, path in enumerate(tree.success_paths):
@@ -106,7 +113,12 @@ class InjectionEngine:
                 "method": "attack_tree",
                 "leaked_data": [],
                 "diff": "",
-                "severity": "High"
+                "severity": "High",
+                "leak_category": "Instruction Override",
+                "analysis_mode": getattr(self.analyzer, "analysis_mode", "balanced"),
+                "decision_reason": "Attack tree found a successful path in the configured mock/target connector.",
+                "evidence": [{"category": "Instruction Override", "source": "attack_tree", "reason": "Successful path recorded by AttackTree.", "value_preview": "path"}],
+                "language": self.language
             }
             self.results.append(entry)
             logger.info(f"Attack tree path {i+1}: {entry['payload']}")
@@ -121,7 +133,12 @@ class InjectionEngine:
                 "method": "attack_tree",
                 "leaked_data": [],
                 "diff": "",
-                "severity": "Info"
+                "severity": "Info",
+                "leak_category": "",
+                "analysis_mode": getattr(self.analyzer, "analysis_mode", "balanced"),
+                "decision_reason": "Attack tree did not find a successful path.",
+                "evidence": [],
+                "language": self.language
             })
         return self.results
 

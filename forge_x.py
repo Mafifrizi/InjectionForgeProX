@@ -7,7 +7,7 @@ import logging  # <-- TAMBAHAN
 from pathlib import Path
 
 from core.payloads import PayloadManager
-from core.analyzer import SmartAnalyzer
+from core.analyzer import SmartAnalyzer, normalize_analysis_mode
 from core.engine import InjectionEngine
 from core.validator import validate_analyzer
 from core.reporter import (generate_json_report, generate_html_report,
@@ -65,7 +65,7 @@ def parse_auth_data(val):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="InjectionForge Pro X v1.0 – Full Spectrum",
+        description="InjectionForge Pro X v1.0 - Full Spectrum",
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="""
 Contoh penggunaan:
@@ -84,10 +84,10 @@ Contoh penggunaan:
   # WAF bypass
   python forge_x.py --target custom --endpoint "https://protected.umkm.com/api/chat" --bypass-waf auto --tls-fingerprint random --stealth --aggressive --rounds 20
 
-  # Adaptive agent multi‑turn dengan auto‑profiling
+  # Adaptive agent multi-turn dengan auto-profiling
   python forge_x.py --target custom --endpoint "http://127.0.0.1:5000/v1/chat" --adaptive-agent --rounds 10 --headers "X-API-Key:masta-dev-123"
 
-  # AI‑generated payloads + multi‑threading (menggunakan worker bawaan engine)
+  # AI-generated payloads + multi-threading (menggunakan worker bawaan engine)
   python forge_x.py --target custom --endpoint "https://api.umkm.com/chat" --ai-payloads --workers 4 --rounds 20 --format json
         """
     )
@@ -112,6 +112,8 @@ Contoh penggunaan:
     parser.add_argument("--stealth", action="store_true", help="Aktifkan random User-Agent + delay jitter")
     parser.add_argument("--delay", type=float, default=1.0, help="Delay dasar antar request (detik)")
     parser.add_argument("--timeout", type=int, default=30, help="Timeout request (detik)")
+    parser.add_argument("--language", choices=["auto","en","id","mixed"], default="auto", help="Bahasa payload/analyzer: auto, en, id, mixed (default: auto)")
+    parser.add_argument("--analysis-mode", choices=["strict","balanced","sensitive"], default="balanced", help="Mode deteksi analyzer: strict=minim FP, balanced=default, sensitive=minim FN")
 
     # Payload & serangan
     parser.add_argument("--rounds", type=int, default=10, help="Jumlah percobaan injeksi")
@@ -119,16 +121,16 @@ Contoh penggunaan:
     parser.add_argument("--mutate", action="store_true", help="Aktifkan mutasi standar (base64, ROT13, dll.)")
     parser.add_argument("--aggressive", action="store_true", help="Mutasi agresif + generator jika database kosong")
     parser.add_argument("--adaptive", action="store_true", help="Payload adaptif berdasarkan bobot keberhasilan")
-    parser.add_argument("--multi-stage", action="store_true", help="Serangan 2‑langkah (priming + exploitation)")
+    parser.add_argument("--multi-stage", action="store_true", help="Serangan 2-langkah (priming + exploitation)")
     parser.add_argument("--history", help="File JSON conversation history")
     parser.add_argument("--audit", action="store_true", help="Mode audit: payload bisnis tanpa mutasi")
-    parser.add_argument("--attack-tree", action="store_true", help="Gunakan attack tree multi‑turn adaptif")
+    parser.add_argument("--attack-tree", action="store_true", help="Gunakan attack tree multi-turn adaptif")
     parser.add_argument("--max-depth", type=int, default=2, help="Kedalaman maksimum attack tree")
     parser.add_argument("--workers", type=int, default=4, help="Jumlah thread untuk multi-threading")
     parser.add_argument("--ai-payloads", action="store_true", help="Gunakan AIPayloadEngine (LLM lokal) untuk generate payload tambahan")
 
     # Fitur baru: Adaptive Agent & LLM Generator
-    parser.add_argument("--adaptive-agent", action="store_true", help="Gunakan adaptive multi‑turn agent dengan auto‑profiling")
+    parser.add_argument("--adaptive-agent", action="store_true", help="Gunakan adaptive multi-turn agent dengan auto-profiling")
     parser.add_argument("--target-description", help="Deskripsi target opsional. Jika dikosongkan, akan diisi otomatis.")
 
     # Output
@@ -137,12 +139,12 @@ Contoh penggunaan:
     parser.add_argument("--diff", action="store_true", help="Bandingkan respons dengan baseline (prompt netral)")
 
     # Validasi
-    parser.add_argument("--validate", action="store_true", help="Self‑test analyzer (presisi >= 95%)")
+    parser.add_argument("--validate", action="store_true", help="Self-test analyzer (presisi >= 95%)")
     parser.add_argument("--light", action="store_true", help="Gunakan hanya satu model (lebih ringan)")
     parser.add_argument("--offline", action="store_true", help="Mode offline: tidak unduh model, hanya regex+refusal")
 
     # Discovery & profiling
-    parser.add_argument("--discover", action="store_true", help="Auto‑discovery endpoint dari halaman web")
+    parser.add_argument("--discover", action="store_true", help="Auto-discovery endpoint dari halaman web")
     parser.add_argument("--auto-profile", action="store_true", default=True, help="Profil target & pilih strategi otomatis")
     parser.add_argument("--waf-detect", action="store_true", help="Deteksi WAF tanpa menjalankan serangan")
     parser.add_argument("--graphql-introspect", action="store_true", help="Introspect GraphQL schema sebelum serangan")
@@ -161,7 +163,7 @@ Contoh penggunaan:
 
     # Validasi analyzer
     if args.validate:
-        ok = validate_analyzer(light=args.light, offline=args.offline)
+        ok = validate_analyzer(light=args.light, offline=args.offline, language=args.language, analysis_mode=args.analysis_mode)
         sys.exit(0 if ok else 1)
 
     # WAF detection
@@ -291,7 +293,7 @@ Contoh penggunaan:
             )
 
     try:
-        pm = PayloadManager()
+        pm = PayloadManager(language=args.language)
     except Exception as e:
         sys.exit(f"[!] Payload error: {e}")
 
@@ -302,7 +304,7 @@ Contoh penggunaan:
             db_path="data/payloads.db",
             ollama_url=args.llm_judge or "http://localhost:11434"
         )
-        print("[*] AIPayloadEngine aktif – akan generate payload AI.")
+        print("[*] AIPayloadEngine aktif - akan generate payload AI.")
 
     # =========================================================
     # Adaptive Agent (dengan kemungkinan override generator)
@@ -311,7 +313,7 @@ Contoh penggunaan:
         from core.adaptive_agent import AdaptiveAgent
         from core.llm_generator import LLMGenerator
 
-        llm_gen = LLMGenerator()
+        llm_gen = LLMGenerator(language=args.language)
         if ai_engine:
             class AIWrapper:
                 def generate(self, prompt, **kwargs):
@@ -324,9 +326,11 @@ Contoh penggunaan:
             pm.refusal,
             use_dual_model=False,
             offline=True,
-            llm_judge_url=args.llm_judge or "http://localhost:11434"
+            llm_judge_url=args.llm_judge or "http://localhost:11434",
+            language=args.language,
+            analysis_mode=args.analysis_mode
         )
-        agent = AdaptiveAgent(conn, adaptive_analyzer, llm_gen=llm_gen)
+        agent = AdaptiveAgent(conn, adaptive_analyzer, llm_gen=llm_gen, language=args.language)
 
         if not args.target_description:
             print("[*] Auto-profiling target...")
@@ -354,7 +358,7 @@ Contoh penggunaan:
                     )
 
         for i, r in enumerate(results, 1):
-            status = "✅" if r["success"] else "❌"
+            status = "SUCCESS" if r["success"] else "FAIL"
             cat = r.get("leak_category", "")
             sev = r.get("severity", "Info")
             print(f"  Turn {i} [{r['strategy']}]: {r['payload'][:80]}... -> {status} {cat}/{sev}")
@@ -383,7 +387,9 @@ Contoh penggunaan:
         pm.refusal,
         use_dual_model=not args.light,
         offline=args.offline,
-        llm_judge_url=args.llm_judge
+        llm_judge_url=args.llm_judge,
+        language=args.language,
+        analysis_mode=args.analysis_mode
     )
 
     history = None
@@ -398,10 +404,14 @@ Contoh penggunaan:
         diff_mode=args.diff,
         attack_tree=args.attack_tree,
         max_depth=args.max_depth,
-        workers=args.workers
+        workers=args.workers,
+        language=args.language
     )
 
-    print(f"[*] Memulai kampanye {args.rounds} round ke {args.target}...")
+    if args.attack_tree:
+        print(f"[*] Memulai attack-tree ke {args.target} (max_depth={args.max_depth}, language={args.language})...")
+    else:
+        print(f"[*] Memulai kampanye {args.rounds} round ke {args.target}...")
     results = engine.run_campaign(
         rounds=args.rounds,
         category=args.category,
@@ -431,7 +441,7 @@ Contoh penggunaan:
                 analysis = analyzer.analyze(payload, resp)
                 success = analysis.get("success", False)
                 return {
-                    "round": -1,  # akan di‑assign nanti
+                    "round": -1,  # akan di-assign nanti
                     "payload": payload,
                     "response": resp,
                     "success": success,
@@ -439,7 +449,12 @@ Contoh penggunaan:
                     "method": "ai_generated",
                     "leaked_data": analysis.get("leaked_data", []),
                     "diff": "",
-                    "severity": analysis.get("severity", "Info")
+                    "severity": analysis.get("severity", "Info"),
+                    "leak_category": analysis.get("leak_category", ""),
+                    "analysis_mode": analysis.get("analysis_mode", args.analysis_mode),
+                    "decision_reason": analysis.get("decision_reason", ""),
+                    "evidence": analysis.get("evidence", []),
+                    "language": analysis.get("language", args.language)
                 }
             except Exception as e:
                 return {
@@ -451,7 +466,12 @@ Contoh penggunaan:
                     "method": "ai_generated",
                     "leaked_data": [],
                     "diff": "",
-                    "severity": "Info"
+                    "severity": "Info",
+                    "leak_category": "",
+                    "analysis_mode": args.analysis_mode,
+                    "decision_reason": "AI payload processing raised an exception before analysis completed.",
+                    "evidence": [],
+                    "language": args.language
                 }
 
         ai_results = []

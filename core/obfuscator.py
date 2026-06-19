@@ -18,7 +18,7 @@ class Obfuscator:
     def aggressive_mutate(text: str) -> str:
         methods = [
             Obfuscator._unicode_confusable,
-            Obfuscator._emoji_injection,
+            Obfuscator._marker_injection,
             Obfuscator._rtl_override,
             Obfuscator._zero_width,
             Obfuscator._case_variation,
@@ -58,10 +58,15 @@ class Obfuscator:
         return ''.join(confusable.get(c,c) for c in text)
 
     @staticmethod
-    def _emoji_injection(text: str) -> str:
-        emojis = ['😈','🔥','💀','⚡','🕵️','🔓']
+    def _marker_injection(text: str) -> str:
+        markers = ['[x]', '[!]', '[audit]', '[seg]', '[ctrl]', '[safe]']
         words = text.split()
-        return ' '.join(w + random.choice(emojis) for w in words)
+        return ' '.join(w + random.choice(markers) for w in words)
+
+    @staticmethod
+    def _emoji_injection(text: str) -> str:
+        # Backward-compatible alias kept for callers/tests from older versions.
+        return Obfuscator._marker_injection(text)
 
     @staticmethod
     def _rtl_override(text: str) -> str:

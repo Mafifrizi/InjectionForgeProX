@@ -15,9 +15,15 @@ class MockTargetConnector(BaseConnector):
         # Deteksi upaya injeksi: kata kunci + permintaan rahasia
         injection_keywords = [
             "ignore", "disregard", "override", "developer",
-            "system", "new instruction", "dan", "previous"
+            "system", "new instruction", "dan", "previous",
+            # Multilingual mock support for Bahasa Indonesia test campaigns
+            "abaikan", "kesampingkan", "instruksi", "pengembang",
+            "sistem", "perintah baru", "sebelumnya"
         ]
-        secret_keywords = ["secret", "password", "flag", "token", "hidden"]
+        secret_keywords = [
+            "secret", "password", "flag", "token", "hidden",
+            "rahasia", "kata sandi", "sandi", "tersembunyi", "kunci"
+        ]
 
         has_injection = any(k in prompt_lower for k in injection_keywords)
         asks_secret = any(k in prompt_lower for k in secret_keywords)
