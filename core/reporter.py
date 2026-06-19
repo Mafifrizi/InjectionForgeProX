@@ -3,6 +3,8 @@ import html
 import json
 from pathlib import Path
 
+from .redaction import redact_results
+
 try:
     from colorama import Fore, Style, init
     init(autoreset=True)
@@ -46,7 +48,8 @@ def _evidence_summary(result):
     return " | ".join(chunks)
 
 
-def generate_html_report(results, output_path):
+def generate_html_report(results, output_path, redact=False):
+    results = redact_results(results, enabled=redact)
     rows = ""
     for r in results:
         cls = "success" if r.get("success") else "fail"
@@ -118,14 +121,16 @@ tr.fail {{ background:#fff7ed; }}
     path.write_text(html_content, encoding="utf-8")
 
 
-def generate_json_report(results, output_path):
+def generate_json_report(results, output_path, redact=False):
+    results = redact_results(results, enabled=redact)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
 
-def generate_csv_report(results, output_path):
+def generate_csv_report(results, output_path, redact=False):
+    results = redact_results(results, enabled=redact)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
@@ -143,7 +148,8 @@ def generate_csv_report(results, output_path):
             ])
 
 
-def generate_pdf_report(results, output_path):
+def generate_pdf_report(results, output_path, redact=False):
+    results = redact_results(results, enabled=redact)
     if not HAS_PDF:
         print("[WARN] reportlab is not installed. Install it with: pip install reportlab")
         return
@@ -176,7 +182,8 @@ def generate_pdf_report(results, output_path):
     doc.build(elements)
 
 
-def generate_xlsx_report(results, output_path):
+def generate_xlsx_report(results, output_path, redact=False):
+    results = redact_results(results, enabled=redact)
     if not HAS_XLSX:
         print("[WARN] openpyxl is not installed. Install it with: pip install openpyxl")
         return
@@ -205,7 +212,8 @@ def generate_xlsx_report(results, output_path):
     wb.save(output_path)
 
 
-def print_colored_summary(results):
+def print_colored_summary(results, redact=False):
+    results = redact_results(results, enabled=redact)
     for r in results:
         status = f"{Fore.GREEN}SUCCESS" if r.get("success") else f"{Fore.RED}FAIL"
         print(f"{Style.BRIGHT}Round {r.get('round')}{Style.RESET_ALL}: {status} "

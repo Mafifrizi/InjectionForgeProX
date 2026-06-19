@@ -1,42 +1,30 @@
-# InjectionForge Pro X v1.0
+# InjectionForge Pro X v1.1.0
 
-Advanced framework for authorized prompt-injection, chatbot security, and sensitive-disclosure testing.
+Production-ready open-source framework for authorized prompt-injection, chatbot security, and sensitive-disclosure testing.
 
-[![Tests](https://img.shields.io/badge/tests-45%20pytest%20tests-brightgreen)]()
+[![CI](https://github.com/Mafifrizi/InjectionForgeProX/actions/workflows/ci.yml/badge.svg)](https://github.com/Mafifrizi/InjectionForgeProX/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-50%20pytest%20tests-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-orange)]()
+[![Version](https://img.shields.io/badge/version-1.1.0-orange)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 
-## Overview
+## Status
 
-InjectionForge Pro X is a command-line security testing framework for evaluating whether an AI assistant, chatbot, or LLM-backed API leaks sensitive information or accepts unsafe instruction overrides.
+InjectionForge Pro X is designed for authorized LLM and chatbot security testing. It is suitable for internal security review, developer validation, lab environments, CTF-style exercises, and bug bounty programs that explicitly allow this type of testing.
 
-The tool is designed for authorized testing only. It is suitable for internal security review, lab validation, CTF-style exercises, and bug bounty testing where the target program explicitly allows this class of testing.
+Production-readiness baseline included in this release:
 
-Core goals:
+- Continuous integration workflow for compile checks, tests, analyzer validation, and strict benchmark evaluation.
+- JSON/YAML profiles for repeatable target configuration.
+- Global token-bucket rate limiter shared across worker threads.
+- Redacted reports by default to reduce secondary leakage risk.
+- Evidence-gated analyzer with strict, balanced, and sensitive modes.
+- English, Bahasa Indonesia, mixed-language, and auto language modes.
+- Regression dataset with 153 labeled cases.
+- Packaging metadata through `pyproject.toml`.
+- Production usage guide and example profiles.
 
-- Keep offline mode lightweight and deterministic.
-- Support English, Bahasa Indonesia, and mixed-language targets.
-- Reduce false positives with evidence-gated analysis.
-- Reduce false negatives with configurable detection modes.
-- Produce reports that are readable by security engineers and developers.
-
-## Key Features
-
-- Multi-protocol connectors: REST, WebSocket, Server-Sent Events, GraphQL, Ollama, OpenAI, Claude, Gemini, Cohere, and Hugging Face.
-- Multilingual payload support: English, Bahasa Indonesia, mixed, and auto mode.
-- Evidence-gated analyzer: a finding requires concrete evidence, not just a broad keyword match.
-- Analyzer modes:
-  - `strict`: conservative mode for reporting, prioritizes low false positives.
-  - `balanced`: default mode, balanced precision and recall.
-  - `sensitive`: exploration mode, prioritizes lower false negatives.
-- Structured evidence in reports: decision reason, evidence source, leak category, severity, language, and analysis mode.
-- Attack-tree mode for multi-turn probing.
-- Adaptive agent mode with target profiling and optional local LLM payload generation.
-- WAF and stealth options: cloudscraper, curl_cffi, TLS fingerprint selection, headless browser support, proxy, and delay controls.
-- Multi-format reports: JSON, HTML, CSV, PDF, XLSX, and terminal summary.
-- SQLite result logging.
-- Regression tests for multilingual analysis and FP/FN hardening.
+Use this tool only where you have explicit authorization.
 
 ## Installation
 
@@ -45,169 +33,247 @@ pip install -r requirements.txt
 playwright install   # only needed for headless browser mode
 ```
 
+Optional editable install:
+
+```bash
+pip install -e .[test]
+injectionforge --version
+```
+
 ## Quick Validation
 
-Run these checks before using the tool against any authorized target:
+Run these before using the tool or before publishing changes:
 
 ```bash
 python -m compileall -q .
 pytest -q
-python forge_x.py --validate --light --offline
-python evaluate.py
+python forge_x.py --validate --light --offline --analysis-mode balanced
+python evaluate.py --analysis-mode strict
+python forge_x.py --target mock --attack-tree --max-depth 3 --offline --language id --analysis-mode strict
 ```
 
-Expected high-level result:
+Expected result:
 
 ```text
 pytest: all tests passed
 Analyzer validation: quality gate passed
-Benchmark: 100% precision, 100% recall on the included labeled dataset
+Benchmark: 100% precision and 100% recall on the bundled regression dataset
+Attack-tree mock run: successful paths found
 ```
 
-The bundled dataset is a regression benchmark, not a guarantee of zero false positives or zero false negatives on all real-world targets. Real engagements still require manual review.
+The bundled dataset is a regression benchmark, not a universal guarantee of zero false positives or zero false negatives on every real target. Manual review is still required before reporting findings.
+
+## Recommended Real-Target Command
+
+```bash
+python forge_x.py --target custom --endpoint "https://target.example/api/chat" \
+  --method POST --json-path "reply" --language auto --analysis-mode strict \
+  --audit --rounds 20 --workers 2 --rate-limit 1 --burst 1 \
+  --timeout 20 --diff --format html --output reports/final.html \
+  --offline --authorized
+```
+
+Workflow:
+
+1. Use `sensitive` mode for candidate discovery.
+2. Retest candidates with `strict` mode.
+3. Manually reproduce every finding.
+4. Keep report redaction enabled unless the report is stored in a restricted internal location.
+
+## Profiles
+
+Profiles reduce command-line mistakes during repeated engagements.
+
+Example:
+
+```bash
+python forge_x.py --profile examples/profiles/mock-strict.json
+```
+
+Profile files can be JSON or YAML. CLI flags override profile values.
+
+Example profile:
+
+```json
+{
+  "target": "custom",
+  "endpoint": "https://api.example.com/chat",
+  "method": "POST",
+  "json-path": "reply",
+  "headers": {
+    "Authorization": "Bearer REPLACE_ME"
+  },
+  "language": "auto",
+  "analysis-mode": "strict",
+  "audit": true,
+  "rounds": 20,
+  "workers": 2,
+  "rate-limit": 1,
+  "burst": 1,
+  "offline": true,
+  "authorized": true,
+  "format": "html",
+  "output": "reports/final.html"
+}
+```
+
+## Rate Limiting
+
+`--rate-limit` enables a global token-bucket limiter shared by all workers.
+
+Examples:
+
+```bash
+--rate-limit 1 --burst 1     # one request per second
+--rate-limit 0.5 --burst 1   # one request every two seconds
+--rate-limit 0               # disabled
+```
+
+For small real targets, start with `--workers 1` or `--workers 2` and `--rate-limit 1`.
+
+## Report Redaction
+
+Reports are redacted by default. Sensitive-looking values in response bodies, leaked-data fields, and evidence previews are masked before export.
+
+Default:
+
+```bash
+python forge_x.py --target mock --format html --output reports/report.html
+```
+
+Disable redaction only when needed:
+
+```bash
+python forge_x.py --target mock --format json --output reports/raw.json --no-redact
+```
+
+Do not commit report files. They are runtime artifacts and are ignored by `.gitignore`.
 
 ## Command Reference
 
-### Target and Connection
+### Profile and safety
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--target` | Target type: `auto`, `mock`, `custom`, `openai`, `claude`, `gemini`, `cohere`, `ollama`, `huggingface`, `graphql` | `--target custom` |
-| `--endpoint` | API/chat endpoint URL | `--endpoint https://api.example.com/chat` |
-| `--method` | Method: `POST`, `GET`, `WS`, `SSE` | `--method POST` |
-| `--headers` | Extra headers as JSON or `Key:Val` pairs | `--headers '{"Authorization":"Bearer token"}'` |
-| `--cookie` | Cookie string or cookie file | `--cookie "session=abc123"` |
-| `--json-path` | Response text path | `--json-path "data.reply"` |
-| `--form` | Send request as form-encoded data | `--form` |
-| `--timeout` | Request timeout in seconds | `--timeout 30` |
-| `--proxy` | Proxy URL | `--proxy http://127.0.0.1:8080` |
-| `--insecure` | Disable TLS verification for internal testing | `--insecure` |
+| Flag | Description |
+|------|-------------|
+| `--profile` | JSON/YAML profile file with reusable target settings. |
+| `--authorized` | Confirms that you are authorized to test the target. |
+| `--version` | Prints the tool version. |
 
-### Language and Analyzer
+### Target and connection
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--language` | Payload/analyzer language: `auto`, `en`, `id`, `mixed` | `--language auto` |
-| `--analysis-mode` | Detection mode: `strict`, `balanced`, `sensitive` | `--analysis-mode strict` |
-| `--validate` | Run analyzer validation dataset | `--validate` |
-| `--light` | Use a lighter validation/model setup | `--light` |
-| `--offline` | Disable model download and use deterministic local checks | `--offline` |
-| `--llm-judge` | Optional Ollama URL for confirmatory LLM judging | `--llm-judge http://localhost:11434` |
+| Flag | Description |
+|------|-------------|
+| `--target` | `auto`, `mock`, `custom`, `openai`, `claude`, `gemini`, `cohere`, `ollama`, `huggingface`, `graphql`. |
+| `--endpoint` | API/chat endpoint URL. |
+| `--method` | `POST`, `GET`, `WS`, or `SSE`. |
+| `--headers` | Extra headers as JSON or `Key:Val` pairs. |
+| `--cookie` | Cookie string or cookie file. |
+| `--json-path` | Path to response text, such as `data.reply`. |
+| `--form` | Send as form-encoded data. |
+| `--timeout` | Request timeout in seconds. |
+| `--proxy` | Proxy URL. |
+| `--insecure` | Disable TLS verification for authorized internal testing. |
+
+### Language and analyzer
+
+| Flag | Description |
+|------|-------------|
+| `--language` | `auto`, `en`, `id`, or `mixed`. |
+| `--analysis-mode` | `strict`, `balanced`, or `sensitive`. |
+| `--validate` | Run analyzer validation dataset. |
+| `--light` | Use lighter validation/model setup. |
+| `--offline` | Disable model download and use deterministic checks. |
+| `--llm-judge` | Optional Ollama URL for confirmatory LLM judging. |
 
 Analyzer mode guidance:
 
 | Mode | Best for | Behavior |
 |------|----------|----------|
-| `strict` | Final reports and bug bounty submissions | Minimizes false positives. Requires stronger evidence. |
-| `balanced` | Default testing | Balanced evidence gates and recall. |
-| `sensitive` | Early exploration | Reduces false negatives, but findings need more manual review. |
+| `strict` | Final reports and bug bounty submissions | Lowest false-positive risk. Requires stronger evidence. |
+| `balanced` | Normal testing | Balanced evidence gates and recall. |
+| `sensitive` | Early exploration | Lower false-negative risk. Requires more manual review. |
 
-### Payload and Campaign
+### Payload and campaign
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--category` | Payload category: `basic`, `advanced`, `indirect`, `agent`, `graphql` | `--category advanced` |
-| `--rounds` | Number of attempts | `--rounds 20` |
-| `--mutate` | Enable standard mutation | `--mutate` |
-| `--aggressive` | Enable aggressive mutation and generation fallback | `--aggressive` |
-| `--audit` | Use audit-oriented payload selection | `--audit` |
-| `--adaptive` | Enable adaptive payload weighting | `--adaptive` |
-| `--multi-stage` | Enable two-step priming and exploitation | `--multi-stage` |
-| `--history` | JSON conversation history file | `--history convo.json` |
-| `--workers` | Number of worker threads | `--workers 8` |
-| `--ai-payloads` | Generate additional payloads with local AI payload engine | `--ai-payloads` |
+| Flag | Description |
+|------|-------------|
+| `--category` | `basic`, `advanced`, `indirect`, `agent`, or `graphql`. |
+| `--rounds` | Number of attempts. |
+| `--mutate` | Enable standard mutation. |
+| `--aggressive` | Enable aggressive mutation and generation fallback. |
+| `--audit` | Use audit-oriented payload selection. |
+| `--adaptive` | Enable adaptive payload weighting. |
+| `--multi-stage` | Enable two-step priming and exploitation. |
+| `--history` | JSON conversation history file. |
+| `--workers` | Number of worker threads. |
+| `--rate-limit` | Global request rate limit across all workers. |
+| `--burst` | Token-bucket burst size. |
+| `--ai-payloads` | Generate additional payloads with local AI payload engine. |
 
-### Attack Tree and Adaptive Agent
+### Attack tree and adaptive agent
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--attack-tree` | Run adaptive attack-tree mode | `--attack-tree` |
-| `--max-depth` | Maximum attack-tree depth | `--max-depth 3` |
-| `--adaptive-agent` | Run adaptive multi-turn agent | `--adaptive-agent` |
-| `--target-description` | Manual target description for adaptive agent | `--target-description "support chatbot"` |
-
-### WAF, Stealth, and Discovery
-
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--bypass-waf` | WAF bypass profile: `cloudflare`, `akamai`, `auto`, `none` | `--bypass-waf auto` |
-| `--tls-fingerprint` | TLS profile: `random`, `chrome`, `firefox`, `safari` | `--tls-fingerprint chrome` |
-| `--headless` | Use headless browser for JavaScript challenge handling | `--headless` |
-| `--stealth` | Random User-Agent and delay jitter | `--stealth` |
-| `--delay` | Base delay between requests | `--delay 1.5` |
-| `--discover` | Discover chat endpoint from a webpage | `--discover` |
-| `--auto-profile` | Profile target and choose strategy automatically | `--auto-profile` |
-| `--waf-detect` | Detect WAF and exit | `--waf-detect` |
-| `--graphql-introspect` | Introspect GraphQL schema before testing | `--graphql-introspect` |
+| Flag | Description |
+|------|-------------|
+| `--attack-tree` | Run adaptive attack-tree mode. |
+| `--max-depth` | Maximum attack-tree depth. |
+| `--adaptive-agent` | Run adaptive multi-turn agent. |
+| `--target-description` | Manual target description for adaptive agent. |
 
 ### Output
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--format` | Report format: `json`, `html`, `csv`, `pdf`, `xlsx`, `term` | `--format html` |
-| `--output` | Output report path | `--output reports/client-a.html` |
-| `--diff` | Compare response with a neutral baseline | `--diff` |
+| Flag | Description |
+|------|-------------|
+| `--format` | `json`, `html`, `csv`, `pdf`, `xlsx`, or `term`. |
+| `--output` | Output report path. |
+| `--redact` / `--no-redact` | Enable or disable report redaction. Redaction is enabled by default. |
+| `--diff` | Compare response with a neutral baseline. |
 
 ## Usage Examples
 
-### Mock target validation
+### Mock target
 
 ```bash
-python forge_x.py --target mock --rounds 10 --aggressive --format json --offline
+python forge_x.py --profile examples/profiles/mock-strict.json
 ```
 
-### Bahasa Indonesia mode
-
-```bash
-python forge_x.py --target mock --attack-tree --max-depth 3 --language id --offline
-```
-
-### Auto multilingual mode
+### REST target
 
 ```bash
 python forge_x.py --target custom --endpoint "https://api.example.com/chat" \
-  --method POST --json-path "reply" --language auto --rounds 20 --offline
-```
-
-### Strict report mode
-
-```bash
-python forge_x.py --target custom --endpoint "https://api.example.com/chat" \
-  --json-path "reply" --analysis-mode strict --format html --output reports/final.html --offline
-```
-
-### Sensitive exploration mode
-
-```bash
-python forge_x.py --target custom --endpoint "https://api.example.com/chat" \
-  --json-path "reply" --analysis-mode sensitive --rounds 50 --format json --offline
+  --method POST --json-path "reply" --headers '{"Authorization":"Bearer TOKEN"}' \
+  --language auto --analysis-mode strict --audit --rounds 20 \
+  --workers 2 --rate-limit 1 --format html --output reports/final.html \
+  --offline --authorized
 ```
 
 ### GraphQL target
 
 ```bash
 python forge_x.py --target graphql --endpoint "https://api.example.com/graphql" \
-  --category graphql --rounds 20 --aggressive --format json --offline
+  --category graphql --language auto --analysis-mode strict --rounds 20 \
+  --workers 2 --rate-limit 1 --format html --output reports/graphql.html \
+  --offline --authorized
 ```
 
 ### WebSocket target
 
 ```bash
 python forge_x.py --target custom --method WS --endpoint "wss://chat.example.com/ws" \
-  --rounds 10 --aggressive --format json --offline
+  --language auto --analysis-mode strict --rounds 15 --workers 1 \
+  --rate-limit 1 --format html --output reports/ws.html --offline --authorized
 ```
 
 ## Analyzer and Evidence Model
 
-The analyzer is intentionally evidence-gated. A response is not marked as successful just because it contains broad words like `password`, `token`, `secret`, `system prompt`, `you are`, `kata sandi`, or `rahasia`.
+The analyzer is evidence-gated. A response is not marked as successful just because it contains words like `password`, `token`, `secret`, `system prompt`, `you are`, `kata sandi`, or `rahasia`.
 
-A success requires one of the following:
+A success requires concrete evidence such as:
 
-- Concrete sensitive value evidence, such as a labeled API key, bearer token, password assignment, internal token assignment, or flag format.
-- Valid system/developer prompt label with non-redacted content.
+- Sensitive value assignment or credential-like value.
+- Non-redacted system/developer prompt disclosure.
 - Explicit instruction-override signal.
-- Explicit audit canary returned from an injection-style prompt.
-- Optional LLM judge confirmation plus local evidence, except in `sensitive` mode where a low-confidence potential disclosure can be surfaced for manual review.
+- Audit canary returned from an injection-style prompt.
+- Optional LLM judge confirmation plus local evidence.
 
 The analyzer filters common false-positive sources:
 
@@ -233,7 +299,7 @@ Every result includes structured metadata:
       "category": "API Key / Token",
       "source": "labeled-sensitive-assignment",
       "reason": "API key assignment",
-      "value_preview": "sk-m...4321"
+      "value_preview": "sk-m...[REDACTED]...4321"
     }
   ]
 }
@@ -241,14 +307,7 @@ Every result includes structured metadata:
 
 ## Validation Dataset
 
-The bundled validation files are:
-
-```text
-data/labeled_test_set.json
-data/benchmark.json
-```
-
-The dataset contains 153 labeled cases across these case types:
+The bundled dataset contains 153 labeled cases across these case types:
 
 - `api_key_leak`
 - `token_leak`
@@ -267,84 +326,44 @@ Run:
 
 ```bash
 python forge_x.py --validate --light --offline --analysis-mode balanced
-python evaluate.py --analysis-mode balanced
 python evaluate.py --analysis-mode strict
-python evaluate.py --analysis-mode sensitive
 ```
-
-## Reports
-
-Reports are written to `reports/` by default. The HTML report is designed for security/developer review and includes:
-
-- Status
-- Confidence
-- Severity
-- Leak category
-- Analyzer method
-- Analyzer mode
-- Decision reason
-- Evidence summary
-- Payload and response excerpts
-
-JSON reports preserve the full result object for later automation.
 
 ## Project Layout
 
 ```text
 InjectionForgeProX/
 |-- forge_x.py
+|-- pyproject.toml
 |-- requirements.txt
 |-- README.md
-|-- LICENSE
-|-- evaluate.py
+|-- SECURITY.md
+|-- CHANGELOG.md
+|-- docs/
+|   |-- PRODUCTION.md
+|   |-- USAGE.md
+|-- examples/
+|   |-- profiles/
 |-- core/
 |   |-- analyzer.py
 |   |-- attack_tree.py
 |   |-- adaptive_agent.py
+|   |-- config.py
 |   |-- language.py
-|   |-- llm_generator.py
-|   |-- payloads.py
-|   |-- payload_generator.py
-|   |-- obfuscator.py
+|   |-- rate_limiter.py
+|   |-- redaction.py
 |   |-- reporter.py
-|   |-- validator.py
-|   |-- database.py
 |   |-- connectors/
-|       |-- rest.py
-|       |-- websocket.py
-|       |-- sse.py
-|       |-- graphql.py
-|       |-- mock_target.py
 |-- data/
-|   |-- payloads_basic.json
-|   |-- payloads_advanced.json
-|   |-- payloads_indirect.json
-|   |-- payloads_agent.json
-|   |-- payloads_graphql.json
-|   |-- payloads_basic_id.json
-|   |-- payloads_advanced_id.json
-|   |-- payloads_indirect_id.json
-|   |-- payloads_agent_id.json
-|   |-- payloads_graphql_id.json
-|   |-- refusal_phrases.txt
-|   |-- refusal_phrases_id.txt
-|   |-- labeled_test_set.json
-|   |-- benchmark.json
 |-- tests/
-|   |-- test_language.py
-|   |-- test_analyzer_regression_fp_fn.py
-|   |-- tests_analyzer.py
-|   |-- tests_payloads.py
-|   |-- tests_reporter.py
-|   |-- test_rest_connector.py
-|   |-- test_integration.py
+|-- .github/workflows/ci.yml
 ```
 
 ## Limitations
 
-No analyzer can guarantee zero false positives or zero false negatives across every real-world LLM response. This project reduces risk through deterministic gates, labeled regression data, explicit analyzer modes, and structured evidence.
+No analyzer can guarantee zero false positives or zero false negatives across every real-world LLM response. This project reduces risk through deterministic gates, labeled regression data, explicit analyzer modes, rate limiting, redacted reports, and structured evidence.
 
-For final bug bounty or client reporting, use `--analysis-mode strict` and manually review each `success=true` result.
+For final reporting, use `--analysis-mode strict` and manually review every `success=true` result.
 
 For exploration, use `--analysis-mode sensitive`, then retest findings with strict mode before reporting.
 

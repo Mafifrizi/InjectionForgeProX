@@ -6,11 +6,13 @@ from .analyzer import SmartAnalyzer
 from .connectors.base import BaseConnector
 from .language import detect_language_from_samples, language_family, normalize_language
 from .llm_generator import LLMGenerator
+from .rate_limiter import TokenBucketRateLimiter
 
 
 class AdaptiveAgent:
     def __init__(self, connector: BaseConnector, analyzer: SmartAnalyzer,
-                 llm_gen: Optional[LLMGenerator] = None, language: str = "en"):
+                 llm_gen: Optional[LLMGenerator] = None, language: str = "en",
+                 rate_limiter: Optional[TokenBucketRateLimiter] = None):
         self.connector = connector
         self.analyzer = analyzer
         self.language = normalize_language(language)
@@ -20,6 +22,7 @@ class AdaptiveAgent:
         self.target_description = "an AI assistant"
         self.static_payloads = self._build_static_payloads()
         self.static_index = 0
+        self.rate_limiter = rate_limiter
 
     def _build_static_payloads(self) -> List[str]:
         langs = language_family(self.language)
@@ -83,6 +86,8 @@ class AdaptiveAgent:
         responses = []
         for probe in self._profile_probes():
             try:
+                if self.rate_limiter:
+                    self.rate_limiter.wait()
                 resp = self.connector.send(probe)
                 responses.append(resp[:300])
             except Exception:
@@ -191,6 +196,8 @@ Target description (ONE SENTENCE):"""
                 payload = payloads[0] if payloads else self.static_payloads[self.static_index % len(self.static_payloads)]
                 self.static_index += 1
 
+            if self.rate_limiter:
+                self.rate_limiter.wait()
             response = self.connector.send(payload)
             analysis = self.analyzer.analyze(payload, response)
             resp_class = self._classify_response(response)

@@ -1,0 +1,14 @@
+{
+  "target": "mock",
+  "language": "id",
+  "analysis-mode": "strict",
+  "category": "basic",
+  "rounds": 10,
+  "workers": 1,
+  "rate-limit": 1,
+  "burst": 1,
+  "offline": true,
+  "authorized": true,
+  "format": "html",
+  "output": "reports/mock-strict.html"
+}

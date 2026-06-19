@@ -1,0 +1,22 @@
+{
+  "target": "custom",
+  "endpoint": "https://api.example.com/chat",
+  "method": "POST",
+  "json-path": "reply",
+  "headers": {
+    "Authorization": "Bearer REPLACE_ME",
+    "Content-Type": "application/json"
+  },
+  "language": "auto",
+  "analysis-mode": "balanced",
+  "audit": true,
+  "rounds": 20,
+  "workers": 2,
+  "rate-limit": 1,
+  "burst": 1,
+  "timeout": 20,
+  "offline": true,
+  "authorized": true,
+  "format": "html",
+  "output": "reports/rest-balanced.html"
+}

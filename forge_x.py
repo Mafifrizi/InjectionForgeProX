@@ -21,6 +21,10 @@ from core.adaptive_agent import AdaptiveAgent
 from core.llm_generator import LLMGenerator
 from core.database import init_db, save_result
 from core.payload_engine import AIPayloadEngine
+from core.config import load_profile, apply_profile
+from core.rate_limiter import build_rate_limiter
+
+VERSION = "1.1.0"
 
 
 def parse_headers(val):
@@ -65,7 +69,7 @@ def parse_auth_data(val):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="InjectionForge Pro X v1.0 - Full Spectrum",
+        description=f"InjectionForge Pro X v{VERSION} - Production Ready",
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="""
 Contoh penggunaan:
@@ -92,6 +96,11 @@ Contoh penggunaan:
         """
     )
 
+    # Profile and safety
+    parser.add_argument("--profile", help="JSON/YAML profile file containing reusable target settings")
+    parser.add_argument("--authorized", action="store_true", help="Confirm that you are authorized to test the target")
+    parser.add_argument("--version", action="store_true", help="Print version and exit")
+
     # Target & koneksi
     parser.add_argument("--target", choices=["auto","mock","custom","openai","claude","gemini","cohere","ollama","huggingface","graphql"], default="auto", help="Jenis target (default: auto)")
     parser.add_argument("--method", default="POST", help="HTTP method (POST, GET, WS, SSE)")
@@ -114,6 +123,8 @@ Contoh penggunaan:
     parser.add_argument("--timeout", type=int, default=30, help="Timeout request (detik)")
     parser.add_argument("--language", choices=["auto","en","id","mixed"], default="auto", help="Bahasa payload/analyzer: auto, en, id, mixed (default: auto)")
     parser.add_argument("--analysis-mode", choices=["strict","balanced","sensitive"], default="balanced", help="Mode deteksi analyzer: strict=minim FP, balanced=default, sensitive=minim FN")
+    parser.add_argument("--rate-limit", type=float, default=0.0, help="Global request rate limit in requests/second across all workers (0=disabled)")
+    parser.add_argument("--burst", type=int, default=1, help="Token bucket burst size for --rate-limit")
 
     # Payload & serangan
     parser.add_argument("--rounds", type=int, default=10, help="Jumlah percobaan injeksi")
@@ -137,6 +148,7 @@ Contoh penggunaan:
     parser.add_argument("--output", help="File laporan (default: reports/report.json)")
     parser.add_argument("--format", choices=["json","html","csv","pdf","xlsx","term"], default="json", help="Format laporan")
     parser.add_argument("--diff", action="store_true", help="Bandingkan respons dengan baseline (prompt netral)")
+    parser.add_argument("--redact", dest="redact", action=argparse.BooleanOptionalAction, default=True, help="Redact sensitive values in generated reports (default: enabled)")
 
     # Validasi
     parser.add_argument("--validate", action="store_true", help="Self-test analyzer (presisi >= 95%)")
@@ -159,6 +171,24 @@ Contoh penggunaan:
     parser.add_argument("--llm-judge", help="URL Ollama untuk LLM judge (contoh: http://localhost:11434)")
 
     args = parser.parse_args()
+
+    if args.version:
+        print(f"InjectionForge Pro X {VERSION}")
+        return
+
+    if args.profile:
+        try:
+            args = apply_profile(args, load_profile(args.profile))
+        except Exception as e:
+            sys.exit(f"[!] Profile error: {e}")
+
+    if args.target not in ("mock", "ollama") and not args.authorized and not args.validate and not args.waf_detect:
+        print("[WARN] Run this tool only against systems you are explicitly authorized to test. Use --authorized to acknowledge scope.")
+
+    rate_limiter = build_rate_limiter(args.rate_limit, args.burst)
+    if rate_limiter.enabled:
+        print(f"[RateLimit] Global limit: {args.rate_limit} req/s, burst={args.burst}")
+
     init_db()
 
     # Validasi analyzer
@@ -330,7 +360,7 @@ Contoh penggunaan:
             language=args.language,
             analysis_mode=args.analysis_mode
         )
-        agent = AdaptiveAgent(conn, adaptive_analyzer, llm_gen=llm_gen, language=args.language)
+        agent = AdaptiveAgent(conn, adaptive_analyzer, llm_gen=llm_gen, language=args.language, rate_limiter=rate_limiter)
 
         if not args.target_description:
             print("[*] Auto-profiling target...")
@@ -365,18 +395,18 @@ Contoh penggunaan:
 
         out = args.output or f"reports/adaptive_report.{args.format if args.format != 'term' else 'json'}"
         if args.format == "json":
-            generate_json_report(results, out)
+            generate_json_report(results, out, redact=args.redact)
         elif args.format == "html":
-            generate_html_report(results, out)
+            generate_html_report(results, out, redact=args.redact)
         elif args.format == "csv":
-            generate_csv_report(results, out)
+            generate_csv_report(results, out, redact=args.redact)
         elif args.format == "pdf":
-            generate_pdf_report(results, out)
+            generate_pdf_report(results, out, redact=args.redact)
         elif args.format == "xlsx":
-            generate_xlsx_report(results, out)
+            generate_xlsx_report(results, out, redact=args.redact)
         elif args.format == "term":
-            print_colored_summary(results)
-            generate_json_report(results, "reports/adaptive_report.json")
+            print_colored_summary(results, redact=args.redact)
+            generate_json_report(results, "reports/adaptive_report.json", redact=args.redact)
         print(f"[Report] Laporan disimpan di {out}")
         return
 
@@ -405,7 +435,8 @@ Contoh penggunaan:
         attack_tree=args.attack_tree,
         max_depth=args.max_depth,
         workers=args.workers,
-        language=args.language
+        language=args.language,
+        rate_limiter=rate_limiter
     )
 
     if args.attack_tree:
@@ -437,6 +468,8 @@ Contoh penggunaan:
         # Fungsi kirim & analisis (sesuai API connector & analyzer sebenarnya)
         def process_ai_payload(payload):
             try:
+                if rate_limiter:
+                    rate_limiter.wait()
                 resp = conn.send(payload, [])  # history kosong
                 analysis = analyzer.analyze(payload, resp)
                 success = analysis.get("success", False)
@@ -514,18 +547,18 @@ Contoh penggunaan:
         out = args.output
 
     if args.format == "json":
-        generate_json_report(results, out)
+        generate_json_report(results, out, redact=args.redact)
     elif args.format == "html":
-        generate_html_report(results, out)
+        generate_html_report(results, out, redact=args.redact)
     elif args.format == "csv":
-        generate_csv_report(results, out)
+        generate_csv_report(results, out, redact=args.redact)
     elif args.format == "pdf":
-        generate_pdf_report(results, out)
+        generate_pdf_report(results, out, redact=args.redact)
     elif args.format == "xlsx":
-        generate_xlsx_report(results, out)
+        generate_xlsx_report(results, out, redact=args.redact)
     elif args.format == "term":
-        print_colored_summary(results)
-        generate_json_report(results, "reports/report.json")
+        print_colored_summary(results, redact=args.redact)
+        generate_json_report(results, "reports/report.json", redact=args.redact)
     print(f"[Report] Laporan disimpan di {out}")
 
 

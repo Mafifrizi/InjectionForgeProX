@@ -8,6 +8,7 @@ from .analyzer import SmartAnalyzer
 from .connectors.base import BaseConnector
 from .attack_tree import AttackTree, AttackNode
 from .database import save_result
+from .rate_limiter import TokenBucketRateLimiter
 
 logger = logging.getLogger("InjectionForgeX")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -18,7 +19,8 @@ class InjectionEngine:
                  analyzer: SmartAnalyzer, stealth: bool = False,
                  delay: float = 1.0, diff_mode: bool = False,
                  attack_tree: bool = False, max_depth: int = 2,
-                 workers: int = 4, language: str = "en"):
+                 workers: int = 4, language: str = "en",
+                 rate_limiter: TokenBucketRateLimiter | None = None):
         self.connector = connector
         self.payload_mgr = payload_mgr
         self.analyzer = analyzer
@@ -30,6 +32,7 @@ class InjectionEngine:
         self.workers = workers
         self.language = language
         self.results = []
+        self.rate_limiter = rate_limiter
 
     def run_campaign(self, rounds=5, category="basic", mutate=False,
                      aggressive=False, adaptive=False, history=None,
@@ -146,6 +149,8 @@ class InjectionEngine:
         last_exc = None
         for attempt in range(retries):
             try:
+                if self.rate_limiter:
+                    self.rate_limiter.wait()
                 return self.connector.send(prompt, history)
             except requests.exceptions.HTTPError as e:
                 if e.response is not None and e.response.status_code == 429:

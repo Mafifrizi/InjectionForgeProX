@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "injectionforge-pro-x"
+version = "1.1.0"
+description = "Authorized prompt-injection and LLM chatbot security testing framework"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Mafifrizi"}]
+keywords = ["llm-security", "prompt-injection", "chatbot-security", "security-testing"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Information Technology",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Security",
+]
+dependencies = [
+  "requests",
+  "sentence-transformers",
+  "numpy",
+  "websocket-client",
+  "sseclient-py",
+  "colorama",
+  "cloudscraper",
+  "curl_cffi",
+  "httpx",
+  "wafw00f",
+  "pysocks",
+  "playwright",
+  "openai",
+  "reportlab",
+  "openpyxl",
+  "pyyaml",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "responses"]
+
+[project.scripts]
+injectionforge = "forge_x:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
