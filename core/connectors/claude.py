@@ -1,6 +1,7 @@
 import requests
 from .base import BaseConnector
-from ..redaction import redact_text
+from ..transport import transport_error_from_exception
+
 
 class ClaudeConnector(BaseConnector):
     def __init__(self, api_key: str, model: str = "claude-3-sonnet-20240229", timeout: int = 30, **kwargs):
@@ -10,17 +11,21 @@ class ClaudeConnector(BaseConnector):
         self.url = "https://api.anthropic.com/v1/messages"
 
     def send(self, prompt: str, history=None) -> str:
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json"
-        }
-        messages = list(history) if history else []
-        messages.append({"role": "user", "content": prompt})
-        data = {"model": self.model, "max_tokens": 256, "messages": messages}
         try:
-            r = requests.post(self.url, headers=headers, json=data, timeout=self.timeout)
-            r.raise_for_status()
-            return r.json()["content"][0]["text"]
-        except Exception as e:
-            return f"ERROR: {redact_text(str(e))}"
+            headers = {
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            }
+            messages = list(history) if history else []
+            messages.append({"role": "user", "content": prompt})
+            response = requests.post(
+                self.url,
+                headers=headers,
+                json={"model": self.model, "max_tokens": 256, "messages": messages},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json()["content"][0]["text"]
+        except requests.RequestException as exc:
+            raise transport_error_from_exception(exc) from exc

@@ -6,15 +6,15 @@ import requests
 from sseclient import SSEClient
 
 from .base import BaseConnector
-from ..redaction import redact_text
+from ..transport import TransportError, transport_error_from_exception
 
 
 class SSEConnector(BaseConnector):
     """Connector for server-sent event chat endpoints.
 
-    The connector bounds both the total stream lifetime and the number of
-    events. A hostile or faulty endpoint cannot keep a worker occupied forever
-    by emitting heartbeat events without sending ``[DONE]``.
+    Request failures propagate into the shared retry layer. Stream safety
+    failures are typed non-retryable transport errors rather than fake chatbot
+    responses.
     """
 
     def __init__(
@@ -58,7 +58,7 @@ class SSEConnector(BaseConnector):
             deadline = time.monotonic() + self.timeout
             for event_number, event in enumerate(client.events(), start=1):
                 if event_number > self.max_events or time.monotonic() >= deadline:
-                    return "ERROR: SSE stream exceeded safety limit"
+                    raise TransportError("SSE stream exceeded safety limit", retryable=False)
                 if not event.data:
                     continue
                 if event.data.strip() == "[DONE]":
@@ -78,11 +78,11 @@ class SSEConnector(BaseConnector):
                         full_text.append(str(data["message"]))
                 except (json.JSONDecodeError, TypeError, AttributeError):
                     full_text.append(event.data)
-            return "".join(full_text) or "ERROR: No SSE response"
+            if not full_text:
+                raise TransportError("No SSE response", retryable=True)
+            return "".join(full_text)
         except requests.RequestException as exc:
-            return f"ERROR: {redact_text(str(exc))}"
-        except Exception as exc:
-            return f"ERROR: {redact_text(str(exc))}"
+            raise transport_error_from_exception(exc) from exc
         finally:
             if response is not None:
                 response.close()

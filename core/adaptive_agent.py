@@ -8,12 +8,14 @@ from .language import detect_language_from_samples, language_family, normalize_l
 from .llm_generator import LLMGenerator
 from .rate_limiter import TokenBucketRateLimiter
 from .redaction import redact_text
+from .transport import TransportCircuitBreaker, TransportResult, send_with_retry
 
 
 class AdaptiveAgent:
     def __init__(self, connector: BaseConnector, analyzer: SmartAnalyzer,
                  llm_gen: Optional[LLMGenerator] = None, language: str = "en",
-                 rate_limiter: Optional[TokenBucketRateLimiter] = None):
+                 rate_limiter: Optional[TokenBucketRateLimiter] = None,
+                 max_consecutive_rate_limits: int = 3):
         self.connector = connector
         self.analyzer = analyzer
         self.language = normalize_language(language)
@@ -24,6 +26,39 @@ class AdaptiveAgent:
         self.static_payloads = self._build_static_payloads()
         self.static_index = 0
         self.rate_limiter = rate_limiter
+        self.transport_breaker = TransportCircuitBreaker(max_consecutive_rate_limits)
+
+    def _safe_send(self, payload: str) -> TransportResult:
+        return send_with_retry(
+            lambda: self.connector.send(payload),
+            max_attempts=3,
+            rate_limiter=self.rate_limiter,
+            circuit_breaker=self.transport_breaker,
+        )
+
+    @staticmethod
+    def _transport_result(turn: int, strategy: str, payload: str, outcome: TransportResult) -> Dict:
+        return {
+            "round": turn,
+            "turn": turn,
+            "strategy": strategy,
+            "payload": payload,
+            "response": outcome.display_response,
+            "success": False,
+            "confidence": 0.0,
+            "response_class": "transport_error",
+            "leak_category": "",
+            "severity": "Info",
+            "leaked_data": [],
+            "language": "auto",
+            "analysis_mode": "balanced",
+            "decision_reason": f"Transport failure after {outcome.attempts} attempt(s): {outcome.error or 'Unknown error'}",
+            "evidence": [],
+            "transport_error": True,
+            "transport_attempts": outcome.attempts,
+            "transport_status_code": outcome.status_code,
+            "transport_retryable": outcome.retryable,
+        }
 
     def _build_static_payloads(self) -> List[str]:
         langs = language_family(self.language)
@@ -86,18 +121,16 @@ class AdaptiveAgent:
     def auto_profile(self) -> str:
         responses = []
         for probe in self._profile_probes():
-            try:
-                if self.rate_limiter:
-                    self.rate_limiter.wait()
-                resp = self.connector.send(probe)
-                # Use analyzer-extracted literals plus generic redaction before
-                # forwarding any target output to the local profiling model.
-                profile_analysis = self.analyzer.analyze(probe, resp)
-                profile_result = {"response": resp, **profile_analysis}
-                from .redaction import redact_result
-                responses.append(redact_result(profile_result).get("response", "")[:300])
-            except Exception:
-                pass
+            outcome = self._safe_send(probe)
+            if not outcome.ok:
+                continue
+            resp = outcome.response or ""
+            # Use analyzer-extracted literals plus generic redaction before
+            # forwarding any target output to the local profiling model.
+            profile_analysis = self.analyzer.analyze(probe, resp)
+            profile_result = {"response": resp, **profile_analysis}
+            from .redaction import redact_result
+            responses.append(redact_result(profile_result).get("response", "")[:300])
 
         profile = detect_language_from_samples(responses)
         if self.language == "auto" and profile.language in ("en", "id", "mixed"):
@@ -187,6 +220,7 @@ Target description (ONE SENTENCE):"""
         return random.choice(["static", "reveal_internal", "sidestep"])
 
     def run_adaptive_session(self, max_turns: int = 10) -> List[Dict]:
+        self.transport_breaker.reset()
         results = []
         strategy = "static"
         consecutive_refusals = 0
@@ -205,9 +239,18 @@ Target description (ONE SENTENCE):"""
                 payload = payloads[0] if payloads else self.static_payloads[self.static_index % len(self.static_payloads)]
                 self.static_index += 1
 
-            if self.rate_limiter:
-                self.rate_limiter.wait()
-            response = self.connector.send(payload)
+            outcome = self._safe_send(payload)
+            if not outcome.ok:
+                error_result = self._transport_result(turn + 1, strategy, payload, outcome)
+                error_result["language"] = self.language
+                error_result["analysis_mode"] = getattr(self.analyzer, "analysis_mode", "balanced")
+                results.append(error_result)
+                strategy = "static"
+                consecutive_refusals = 0
+                consecutive_neutral = 0
+                continue
+
+            response = outcome.response or ""
             analysis = self.analyzer.analyze(payload, response)
             resp_class = self._classify_response(response)
 
@@ -237,6 +280,10 @@ Target description (ONE SENTENCE):"""
                 "analysis_mode": analysis.get("analysis_mode", getattr(self.analyzer, "analysis_mode", "balanced")),
                 "decision_reason": analysis.get("decision_reason", ""),
                 "evidence": analysis.get("evidence", []),
+                "transport_error": False,
+                "transport_attempts": None,
+                "transport_status_code": None,
+                "transport_retryable": False,
             })
 
             if analysis["success"]:

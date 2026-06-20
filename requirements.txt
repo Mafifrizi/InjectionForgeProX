@@ -1,18 +1,18 @@
-requests
-sentence-transformers
-numpy
-pytest
-websocket-client
-sseclient-py
-colorama
-cloudscraper
-curl_cffi
-httpx
-wafw00f
-pysocks
-playwright
-openai
-reportlab
-openpyxl
-responses
-pyyaml
+# Direct runtime and test dependencies.
+# Every direct dependency is bounded to prevent unreviewed major-version upgrades.
+# For a deployment-specific immutable environment, resolve these ranges with hashes
+# in your own lockfile after validating the selected platform and Python version.
+requests>=2.31,<3
+sentence-transformers>=2.7,<4
+websocket-client>=1.6,<2
+sseclient-py>=1.8,<2
+colorama>=0.4,<1
+cloudscraper>=1.2,<2
+curl_cffi>=0.7,<1
+wafw00f>=2.2,<3
+PySocks>=1.7.1,<2
+reportlab>=4.0,<5
+openpyxl>=3.1,<4
+PyYAML>=6.0,<7
+pytest>=8,<10
+responses>=0.25,<1

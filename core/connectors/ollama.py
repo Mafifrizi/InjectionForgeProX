@@ -1,13 +1,17 @@
-import requests
-import time
 import logging
 from typing import Optional, List, Dict
+
+import requests
+
 from .base import BaseConnector
-from ..redaction import redact_text
+from ..transport import transport_error_from_exception
 
 logger = logging.getLogger("InjectionForgeX.Ollama")
 
+
 class OllamaConnector(BaseConnector):
+    """Ollama connector using the shared caller-side retry policy."""
+
     def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3",
                  timeout: int = 60, **kwargs):
         self.base_url = base_url.rstrip("/")
@@ -15,44 +19,30 @@ class OllamaConnector(BaseConnector):
         self.timeout = timeout
         self.generate_url = f"{self.base_url}/api/generate"
 
-    def send(self, prompt: str, history: Optional[List[Dict]] = None, retries: int = 2) -> str:
-        # Gabungkan history jika ada
-        full_prompt = prompt
-        if history:
-            history_text = "\n".join(
-                f"{'User' if h['role'] == 'user' else 'Assistant'}: {h['content']}"
-                for h in history
+    def send(self, prompt: str, history: Optional[List[Dict]] = None) -> str:
+        try:
+            full_prompt = prompt
+            if history:
+                history_text = "\n".join(
+                    f"{'User' if item['role'] == 'user' else 'Assistant'}: {item['content']}"
+                    for item in history
+                )
+                full_prompt = f"{history_text}\nUser: {prompt}\nAssistant:"
+
+            logger.debug("Sending Ollama request to %s: prompt=%d bytes", self.base_url, len(full_prompt))
+            response = requests.post(
+                self.generate_url,
+                json={
+                    "model": self.model,
+                    "prompt": full_prompt,
+                    "stream": False,
+                    "options": {"num_predict": 128, "temperature": 0.7},
+                },
+                timeout=self.timeout,
             )
-            full_prompt = f"{history_text}\nUser: {prompt}\nAssistant:"
-
-        payload = {
-            "model": self.model,
-            "prompt": full_prompt,
-            "stream": False,
-            "options": {
-                "num_predict": 128,   # Lebih pendek → lebih cepat
-                "temperature": 0.7
-            }
-        }
-
-        last_exc = None
-        for attempt in range(retries + 1):
-            logger.debug("Mengirim request ke Ollama (%s): prompt=%d bytes (attempt %d)", self.base_url, len(full_prompt), attempt + 1)
-            try:
-                r = requests.post(self.generate_url, json=payload, timeout=self.timeout)
-                r.raise_for_status()
-                response = r.json().get("response", "")
-                logger.debug("Respons Ollama diterima: %d bytes", len(response))
-                return response
-            except requests.exceptions.Timeout:
-                logger.warning(f"Request ke Ollama timeout ({self.timeout}s). Mencoba lagi...")
-                last_exc = "timeout"
-                if attempt < retries:
-                    time.sleep(2 ** attempt)  # backoff 1s, 2s
-                else:
-                    return f"ERROR: Request timeout setelah {retries+1} percobaan"
-            except Exception as e:
-                logger.error("Gagal mengirim ke Ollama: %s", redact_text(str(e)))
-                return f"ERROR: {redact_text(str(e))}"
-
-        return f"ERROR: {last_exc}"
+            response.raise_for_status()
+            text = response.json().get("response", "")
+            logger.debug("Ollama response received: %d bytes", len(text))
+            return text
+        except requests.RequestException as exc:
+            raise transport_error_from_exception(exc) from exc

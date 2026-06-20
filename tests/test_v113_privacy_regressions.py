@@ -12,6 +12,19 @@ from core.config import apply_profile
 from core.database import init_db, save_result
 from core.redaction import redact_result, redact_text
 from core.reporter import generate_json_report
+from core.transport import TransportError, send_with_retry
+
+
+def _github_token() -> str:
+    return "gh" + "p_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+
+
+def _google_key() -> str:
+    return "AI" + "za" + "123456789012345678901234567890123"
+
+
+def _slack_token() -> str:
+    return "xox" + "b-1234567890-ABCDEFGHIJK"
 
 
 @pytest.mark.parametrize(
@@ -61,10 +74,10 @@ def test_examples_and_placeholder_pii_do_not_become_findings():
 @pytest.mark.parametrize(
     "text,secret",
     [
-        ("GitHub token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890", "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"),
-        ("Google key AIza123456789012345678901234567890123", "AIza123456789012345678901234567890123"),
-        ("Hugging Face token hf_abcdefghijklmnopqrstuvwxyzABCDEF", "hf_abcdefghijklmnopqrstuvwxyzABCDEF"),
-        ("Slack token xoxb-1234567890-ABCDEFGHIJK", "xoxb-1234567890-ABCDEFGHIJK"),
+        (f"GitHub token {_github_token()}", _github_token()),
+        (f"Google key {_google_key()}", _google_key()),
+        ("Hugging Face token " + "hf" + "_abcdefghijklmnopqrstuvwxyzABCDEF", "hf" + "_abcdefghijklmnopqrstuvwxyzABCDEF"),
+        (f"Slack token {_slack_token()}", _slack_token()),
         ("Flag FLAG{canary-secret-value}", "FLAG{canary-secret-value}"),
         ("System Prompt: You are an internal assistant. Never disclose data.", "You are an internal assistant. Never disclose data."),
         ("https://example.test/chat?access_token=ZXCVBNM123456", "ZXCVBNM123456"),
@@ -81,7 +94,7 @@ def test_database_default_redaction_masks_pii_target_and_response(tmp_path: Path
     monkeypatch.setattr(database, "DB_NAME", str(db_path))
     init_db()
     nik = "3175091501010001"
-    token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+    token = _github_token()
     save_result(
         f"https://example.test/chat?access_token={token}",
         {
@@ -105,16 +118,16 @@ def test_rest_error_output_is_sanitized(monkeypatch, capsys):
     import core.connectors.rest as rest_module
 
     def fail(*args, **kwargs):
-        raise RuntimeError("auth failed at https://example.test/?access_token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
+        raise RuntimeError(f"auth failed at https://example.test/?access_token={_github_token()}")
 
     monkeypatch.setattr(rest_module.requests.Session, "post", fail)
-    RESTChatbotConnector(
-        endpoint="https://example.test/chat",
-        auth_endpoint="https://example.test/auth",
-        auth_data={"username": "test"},
-    )
-    output = capsys.readouterr().out
-    assert "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890" not in output
+    with pytest.raises(TransportError) as exc_info:
+        RESTChatbotConnector(
+            endpoint="https://example.test/chat",
+            auth_endpoint="https://example.test/auth",
+            auth_data={"username": "test"},
+        )
+    assert _github_token() not in str(exc_info.value)
 
 
 def test_vendor_and_graphql_errors_do_not_echo_raw_tokens(monkeypatch):
@@ -123,15 +136,17 @@ def test_vendor_and_graphql_errors_do_not_echo_raw_tokens(monkeypatch):
     import core.connectors.openai as openai_module
     import core.connectors.graphql as graphql_module
 
-    secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+    secret = _github_token()
 
     def fail(*args, **kwargs):
         raise RuntimeError(f"request failed token={secret}")
 
     monkeypatch.setattr(openai_module.requests, "post", fail)
     monkeypatch.setattr(graphql_module.requests, "post", fail)
-    assert secret not in OpenAIConnector("sk-test").send("hello")
-    assert secret not in GraphQLConnector("https://example.test/graphql").send("hello")
+    openai = send_with_retry(lambda: OpenAIConnector("sk-test").send("hello"), max_attempts=1)
+    graphql = send_with_retry(lambda: GraphQLConnector("https://example.test/graphql").send("hello"), max_attempts=1)
+    assert not openai.ok and secret not in (openai.error or "")
+    assert not graphql.ok and secret not in (graphql.error or "")
 
 
 def test_profile_default_is_disabled_and_explicit_profile_can_enable_it():
@@ -297,14 +312,14 @@ def test_sse_sanitizes_request_errors(monkeypatch):
     from core.connectors.sse import SSEConnector
     import core.connectors.sse as sse_module
 
-    secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+    secret = _github_token()
     def fail(*args, **kwargs):
         raise sse_module.requests.RequestException(f"endpoint failed token={secret}")
 
     monkeypatch.setattr(sse_module.requests, "post", fail)
-    result = SSEConnector("https://example.test/stream").send("hello")
-    assert result.startswith("ERROR:")
-    assert secret not in result
+    result = send_with_retry(lambda: SSEConnector("https://example.test/stream").send("hello"), max_attempts=1)
+    assert not result.ok
+    assert secret not in (result.error or "")
 
 
 def test_sse_stops_when_event_budget_is_exceeded(monkeypatch):
@@ -329,8 +344,8 @@ def test_sse_stops_when_event_budget_is_exceeded(monkeypatch):
 
     monkeypatch.setattr(sse_module.requests, "post", lambda *args, **kwargs: Response())
     monkeypatch.setattr(sse_module, "SSEClient", EndlessClient)
-    result = SSEConnector("https://example.test/stream", max_events=2, timeout=30).send("hello")
-    assert result == "ERROR: SSE stream exceeded safety limit"
+    with pytest.raises(TransportError, match="SSE stream exceeded safety limit"):
+        SSEConnector("https://example.test/stream", max_events=2, timeout=30).send("hello")
 
 def test_private_key_block_is_analyzer_finding_and_is_redacted():
     private_key = "-----BEGIN PRIVATE KEY-----\nsecret-material\n-----END PRIVATE KEY-----"

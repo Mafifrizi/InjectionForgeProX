@@ -9,12 +9,13 @@ import websocket
 
 from .base import BaseConnector
 from ..redaction import redact_text
+from ..transport import RETRYABLE_HTTP_STATUS_CODES, TransportError
 
 logger = logging.getLogger("InjectionForgeX.websocket")
 
 
 class WebSocketConnector(BaseConnector):
-    """WebSocket connector with bounded waits and redaction-safe logging."""
+    """WebSocket connector with typed transport failures and safe logging."""
 
     def __init__(
         self,
@@ -57,12 +58,20 @@ class WebSocketConnector(BaseConnector):
         return kwargs
 
     def on_message(self, ws, message):
-        # Do not turn connector logs into a second copy of a target response.
         logger.info("WS RECV: %d bytes", len(str(message)))
         self.messages.append(str(message))
 
+    @staticmethod
+    def _error_status(error: object) -> Optional[int]:
+        status = getattr(error, "status_code", None)
+        try:
+            return int(status) if status is not None else None
+        except (TypeError, ValueError):
+            return None
+
     def send(self, prompt: str, history: Optional[List[Dict]] = None) -> str:
         messages: List[str] = []
+        errors: List[object] = []
         connected = threading.Event()
         received = threading.Event()
 
@@ -76,6 +85,7 @@ class WebSocketConnector(BaseConnector):
 
         def on_error(ws, error):
             logger.error("WS error: %s", redact_text(str(error)))
+            errors.append(error)
             connected.set()
             received.set()
 
@@ -87,25 +97,44 @@ class WebSocketConnector(BaseConnector):
             on_message=on_message,
             on_error=on_error,
         )
-        wst = threading.Thread(target=lambda: ws.run_forever(**self._run_kwargs()), daemon=True)
-        wst.start()
+        worker = threading.Thread(target=lambda: ws.run_forever(**self._run_kwargs()), daemon=True)
+        worker.start()
 
         try:
             if not connected.wait(timeout=self.timeout):
-                return "ERROR: WebSocket connection timeout"
+                raise TransportError("WebSocket connection timeout", retryable=True)
+            if errors:
+                error = errors[0]
+                status_code = self._error_status(error)
+                raise TransportError(
+                    redact_text(str(error)) or "WebSocket connection failed",
+                    retryable=status_code is None or status_code in RETRYABLE_HTTP_STATUS_CODES,
+                    status_code=status_code,
+                )
 
             payload = json.dumps({"message": prompt})
             logger.info("WS SEND: %d bytes", len(payload))
             ws.send(payload)
-            received.wait(timeout=self.timeout)
-        except Exception as e:
-            logger.error("WS error: %s", redact_text(str(e)))
-            return f"ERROR: {redact_text(str(e))}"
+            if not received.wait(timeout=self.timeout):
+                raise TransportError("WebSocket response timeout", retryable=True)
+            if errors:
+                error = errors[0]
+                status_code = self._error_status(error)
+                raise TransportError(
+                    redact_text(str(error)) or "WebSocket request failed",
+                    retryable=status_code is None or status_code in RETRYABLE_HTTP_STATUS_CODES,
+                    status_code=status_code,
+                )
+        except TransportError:
+            raise
+        except Exception as exc:
+            logger.error("WS error: %s", redact_text(str(exc)))
+            raise TransportError(redact_text(str(exc)) or "WebSocket send failed", retryable=True) from exc
         finally:
             ws.close()
-            wst.join(timeout=min(1.0, float(self.timeout)))
+            worker.join(timeout=min(1.0, float(self.timeout)))
 
         self.messages = messages
-        if messages:
-            return " | ".join(messages)
-        return "ERROR: No WebSocket response"
+        if not messages:
+            raise TransportError("No WebSocket response", retryable=True)
+        return " | ".join(messages)

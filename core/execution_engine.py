@@ -1,26 +1,21 @@
-"""Legacy execution helper retained for integrations outside the CLI path.
-
-The main CLI uses ``TokenBucketRateLimiter``. This helper protects its local
-pacing state with a lock so direct integrations cannot exceed the configured
-rate delay under concurrent worker use.
-"""
+"""Legacy execution helper retained for integrations outside the CLI path."""
 
 import threading
 import time
 from typing import Callable, Dict, List
 
-import requests
+from .transport import TransportCircuitBreaker, TransportError, send_with_retry
 
 
 class ExecutionEngine:
-    """Parallel execution helper with thread-safe pacing and bounded retry."""
+    """Parallel execution helper using the same transport retry contract."""
 
     def __init__(self, max_threads: int = 3, rate_limit_delay: float = 1.0):
         self.max_threads = max(1, int(max_threads or 1))
         self.rate_limit_delay = max(0.0, float(rate_limit_delay or 0.0))
-        self.session = requests.Session()
         self.last_request_time = 0.0
         self._rate_lock = threading.Lock()
+        self.transport_breaker = TransportCircuitBreaker()
 
     def _rate_limit_wait(self) -> None:
         if self.rate_limit_delay <= 0:
@@ -33,23 +28,22 @@ class ExecutionEngine:
             self.last_request_time = time.monotonic()
 
     def send_with_retry(self, send_func: Callable, payload: str, max_retries: int = 3) -> str:
-        attempts = max(1, int(max_retries or 1))
-        for attempt in range(attempts):
-            self._rate_limit_wait()
-            try:
-                return send_func(payload)
-            except requests.exceptions.HTTPError as error:
-                if error.response is not None and error.response.status_code == 429:
-                    time.sleep((2 ** attempt) + 1)
-                    continue
-                raise
-            except Exception:
-                if attempt == attempts - 1:
-                    raise
-                time.sleep(2 ** attempt)
-        return "ERROR: Max retries exceeded"
+        outcome = send_with_retry(
+            lambda: send_func(payload),
+            max_attempts=max(1, int(max_retries or 1)),
+            rate_limiter=self._rate_limit_wait,
+            circuit_breaker=self.transport_breaker,
+        )
+        if outcome.ok:
+            return outcome.response or ""
+        raise TransportError(
+            outcome.error or "Max retries exceeded",
+            retryable=outcome.retryable,
+            status_code=outcome.status_code,
+        )
 
     def run_parallel(self, send_func: Callable, payloads: List[str]) -> List[Dict]:
+        self.transport_breaker.reset()
         results: List[Dict] = []
         result_lock = threading.Lock()
 

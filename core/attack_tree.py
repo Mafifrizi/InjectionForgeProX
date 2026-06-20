@@ -5,6 +5,7 @@ from typing import Callable, Dict, List, Optional, Set
 from .analyzer import SmartAnalyzer
 from .connectors.base import BaseConnector
 from .language import language_family, normalize_language
+from .transport import TransportCircuitBreaker, TransportResult, send_with_retry
 
 
 class AttackNode:
@@ -17,6 +18,7 @@ class AttackNode:
         self.response: Optional[str] = None
         self.analysis: Dict = {}
         self.success = False
+        self.transport_failure: Optional[TransportResult] = None
 
 
 class AttackTree:
@@ -28,17 +30,25 @@ class AttackTree:
         max_depth: int = 2,
         language: str = "en",
         analyzer: Optional[SmartAnalyzer] = None,
-        send_func: Optional[Callable[[str], str]] = None,
+        send_func: Optional[Callable[[str], object]] = None,
     ):
         self.connector = connector
         self.max_depth = max(1, int(max_depth or 1))
         self.language = normalize_language(language)
         self.analyzer = analyzer or SmartAnalyzer(offline=True, language=self.language)
-        self._send_func = send_func or (lambda payload: self.connector.send(payload))
+        self._transport_breaker = TransportCircuitBreaker()
+        self._send_func = send_func or (
+            lambda payload: send_with_retry(
+                lambda: self.connector.send(payload),
+                max_attempts=3,
+                circuit_breaker=self._transport_breaker,
+            )
+        )
         root_step = self._root_prompt()
         self.root = AttackNode(root_step, step=root_step)
         self.success_paths: List[List[str]] = []
         self.success_nodes: List[AttackNode] = []
+        self.transport_failures: List[TransportResult] = []
         self._visited: Set[str] = set()
 
     def _root_prompt(self) -> str:
@@ -89,10 +99,27 @@ class AttackTree:
             return
         self._visited.add(node.payload)
 
-        response = self._send_func(node.payload)
+        sent = self._send_func(node.payload)
+        if isinstance(sent, TransportResult):
+            if not sent.ok:
+                node.transport_failure = sent
+                node.response = sent.display_response
+                node.analysis = {
+                    "success": False,
+                    "confidence": 0.0,
+                    "severity": "Info",
+                    "leak_category": "",
+                    "decision_reason": f"Attack-tree transport failure after {sent.attempts} attempt(s): {sent.error or 'Unknown error'}",
+                    "evidence": [],
+                }
+                self.transport_failures.append(sent)
+                return
+            response = sent.response or ""
+        else:
+            response = str(sent or "")
         node.response = response
         node.analysis = self.analyzer.analyze(node.payload, response)
-        response_lower = (response or "").lower()
+        response_lower = response.lower()
 
         # Use the same evidence-gated analyzer as normal campaigns. A refusal
         # containing words such as "secret" is never enough to create a path.

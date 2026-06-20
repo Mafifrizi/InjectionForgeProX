@@ -24,8 +24,9 @@ from core.database import init_db, save_result
 from core.payload_engine import AIPayloadEngine
 from core.config import load_profile, apply_profile
 from core.rate_limiter import build_rate_limiter
+from core.transport import TransportCircuitBreaker, send_with_retry
 
-VERSION = "1.1.3"
+VERSION = "1.1.5"
 
 
 def parse_headers(val):
@@ -559,47 +560,62 @@ Contoh penggunaan:
         )
         print(f"[*] Mendapat {len(ai_payloads)} payload AI. Mengirim...")
 
+        # Shared circuit breaker prevents AI workers from continuing to hammer
+        # a target after repeated exhausted HTTP 429 outcomes.
+        ai_transport_breaker = TransportCircuitBreaker()
+
         # Fungsi kirim & analisis (sesuai API connector & analyzer sebenarnya)
         def process_ai_payload(payload):
-            try:
-                if rate_limiter:
-                    rate_limiter.wait()
-                resp = conn.send(payload, [])  # history kosong
-                analysis = analyzer.analyze(payload, resp)
-                success = analysis.get("success", False)
-                return {
-                    "round": -1,  # akan di-assign nanti
-                    "payload": payload,
-                    "response": resp,
-                    "success": success,
-                    "confidence": analysis.get("confidence", 0.0),
-                    "method": "ai_generated",
-                    "leaked_data": analysis.get("leaked_data", []),
-                    "diff": "",
-                    "severity": analysis.get("severity", "Info"),
-                    "leak_category": analysis.get("leak_category", ""),
-                    "analysis_mode": analysis.get("analysis_mode", args.analysis_mode),
-                    "decision_reason": analysis.get("decision_reason", ""),
-                    "evidence": analysis.get("evidence", []),
-                    "language": analysis.get("language", args.language)
-                }
-            except Exception as e:
+            outcome = send_with_retry(
+                lambda: conn.send(payload, []),
+                max_attempts=3,
+                rate_limiter=rate_limiter,
+                circuit_breaker=ai_transport_breaker,
+            )
+            if not outcome.ok:
                 return {
                     "round": -1,
                     "payload": payload,
-                    "response": redact_text(str(e)),
+                    "response": outcome.display_response,
                     "success": False,
                     "confidence": 0.0,
-                    "method": "ai_generated",
+                    "method": "transport_error",
                     "leaked_data": [],
                     "diff": "",
                     "severity": "Info",
                     "leak_category": "",
                     "analysis_mode": args.analysis_mode,
-                    "decision_reason": "AI payload processing raised an exception before analysis completed.",
+                    "decision_reason": f"AI payload transport failure after {outcome.attempts} attempt(s): {outcome.error or 'Unknown error'}",
                     "evidence": [],
-                    "language": args.language
+                    "language": args.language,
+                    "transport_error": True,
+                    "transport_attempts": outcome.attempts,
+                    "transport_status_code": outcome.status_code,
+                    "transport_retryable": outcome.retryable,
                 }
+
+            response = outcome.response or ""
+            analysis = analyzer.analyze(payload, response)
+            return {
+                "round": -1,
+                "payload": payload,
+                "response": response,
+                "success": analysis.get("success", False),
+                "confidence": analysis.get("confidence", 0.0),
+                "method": "ai_generated",
+                "leaked_data": analysis.get("leaked_data", []),
+                "diff": "",
+                "severity": analysis.get("severity", "Info"),
+                "leak_category": analysis.get("leak_category", ""),
+                "analysis_mode": analysis.get("analysis_mode", args.analysis_mode),
+                "decision_reason": analysis.get("decision_reason", ""),
+                "evidence": analysis.get("evidence", []),
+                "language": analysis.get("language", args.language),
+                "transport_error": False,
+                "transport_attempts": None,
+                "transport_status_code": None,
+                "transport_retryable": False,
+            }
 
         ai_results = []
         if args.workers > 1:

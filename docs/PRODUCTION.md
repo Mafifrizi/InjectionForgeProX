@@ -78,3 +78,9 @@ Keep report redaction enabled for shared artifacts. InjectionForge also redacts 
 ## Adaptive AI probe generation
 
 Use `--ai-payloads` only with a local model you control and an authorized target. The engine stores only analyzer-confirmed successful probe metadata, keyed by a target fingerprint, and does not retain raw target responses.
+
+## Transport retry and rate-limit handling
+
+All built-in connectors now raise typed transport failures instead of returning `ERROR:` strings. The shared transport layer applies the global rate limiter before every attempt and retries only transient failures: HTTP `408`, `425`, `429`, `500`, `502`, `503`, `504`, connection failures, and timeouts. It honors a provider `Retry-After` value up to 60 seconds; otherwise it uses bounded exponential backoff with jitter.
+
+A terminal transport failure is recorded with `method=transport_error` and is never analyzed as chatbot output or used to update adaptive payload weights. A campaign-local circuit breaker blocks new target calls after three consecutive exhausted HTTP `429` outcomes, preventing a campaign from amplifying throttling.

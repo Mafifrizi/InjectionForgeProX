@@ -8,6 +8,7 @@ from typing import Dict, Optional, List
 from .base import BaseConnector
 from ..utils import load_user_agents, random_user_agent
 from ..redaction import redact_text
+from ..transport import TransportError, transport_error_from_exception
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -68,41 +69,57 @@ class RESTChatbotConnector(BaseConnector):
             self._fetch_csrf_token()
 
     def _fetch_auth_token(self):
+        """Bootstrap auth fail-closed; never continue an intended auth flow anonymously."""
         payload = self.auth_data or {}
         try:
-            r = self.session.post(self.auth_endpoint, json=payload, timeout=self.timeout)
-            r.raise_for_status()
-            resp = r.json()
-            for key in ["token", "access_token", "jwt"]:
-                if key in resp:
-                    self._auth_token = resp[key]
-                    self.base_headers["Authorization"] = f"Bearer {self._auth_token}"
-                    break
-        except Exception as e:
-            print(f"[!] Gagal fetch auth token: {redact_text(str(e))}")
+            response = self.session.post(self.auth_endpoint, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            body = response.json()
+        except Exception as exc:
+            raise TransportError(
+                f"Authentication bootstrap failed: {redact_text(str(exc)) or type(exc).__name__}",
+                retryable=isinstance(exc, requests.RequestException),
+            ) from exc
+
+        if not isinstance(body, dict):
+            raise TransportError("Authentication bootstrap response was not a JSON object", retryable=False)
+        for key in ("token", "access_token", "jwt"):
+            if body.get(key):
+                self._auth_token = body[key]
+                self.base_headers["Authorization"] = f"Bearer {self._auth_token}"
+                return
+        raise TransportError("Authentication bootstrap response did not contain a supported token", retryable=False)
 
     def _fetch_csrf_token(self):
-        if self.csrf_token_url.startswith("http"):
-            try:
-                r = self.session.get(self.csrf_token_url, timeout=self.timeout)
-                r.raise_for_status()
-                if "application/json" in r.headers.get("content-type",""):
-                    resp = r.json()
-                    for key in ["csrf_token", "csrftoken", "token"]:
-                        if key in resp:
-                            self._csrf_token = resp[key]
-                            break
-                else:
-                    match = re.search(r'name="csrf_token" value="([^"]+)"', r.text)
-                    if match:
-                        self._csrf_token = match.group(1)
-                if self._csrf_token:
-                    self.base_headers["X-CSRFToken"] = self._csrf_token
-            except Exception as e:
-                print(f"[!] Gagal fetch CSRF token: {redact_text(str(e))}")
-        else:
+        if not self.csrf_token_url.startswith("http"):
             self._csrf_token = self.csrf_token_url
             self.base_headers["X-CSRFToken"] = self._csrf_token
+            return
+
+        try:
+            response = self.session.get(self.csrf_token_url, timeout=self.timeout)
+            response.raise_for_status()
+            if "application/json" in response.headers.get("content-type", ""):
+                body = response.json()
+                if not isinstance(body, dict):
+                    raise TransportError("CSRF bootstrap response was not a JSON object", retryable=False)
+                for key in ("csrf_token", "csrftoken", "token"):
+                    if body.get(key):
+                        self._csrf_token = body[key]
+                        break
+            else:
+                match = re.search(r'name="csrf_token" value="([^"]+)"', response.text)
+                if match:
+                    self._csrf_token = match.group(1)
+        except Exception as exc:
+            raise TransportError(
+                f"CSRF bootstrap failed: {redact_text(str(exc)) or type(exc).__name__}",
+                retryable=isinstance(exc, requests.RequestException),
+            ) from exc
+
+        if not self._csrf_token:
+            raise TransportError("CSRF bootstrap response did not contain a token", retryable=False)
+        self.base_headers["X-CSRFToken"] = self._csrf_token
 
     def _build_headers(self):
         """Bangun header dengan case sesuai aslinya."""
@@ -146,6 +163,7 @@ class RESTChatbotConnector(BaseConnector):
         return max(candidates, key=len)
 
     def send(self, prompt: str, history: Optional[List[Dict]] = None) -> str:
+        """Send one request and raise transport failures for the shared wrapper."""
         headers = self._build_headers()
         data = None
         params = None
@@ -162,7 +180,6 @@ class RESTChatbotConnector(BaseConnector):
         else:
             params = {"message": prompt}
 
-        # Logs must not become a second copy of credentials or leaked values.
         logger.info("Headers yang dikirim: %s", self._safe_headers_for_log(headers))
         logger.info("PAYLOAD: %s", redact_text(prompt[:80]))
         logger.info("Mengirim %s ke %s", self.method, redact_text(self.endpoint))
@@ -171,30 +188,31 @@ class RESTChatbotConnector(BaseConnector):
             time.sleep(self.delay * random.uniform(0.7, 1.3))
 
         try:
-            r = self.session.request(
+            response = self.session.request(
                 method=self.method,
                 url=self.endpoint,
                 data=data if not isinstance(data, str) else data,
                 params=params,
                 headers=headers,
-                timeout=self.timeout
+                timeout=self.timeout,
             )
-            r.raise_for_status()
-            resp = r.text
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise transport_error_from_exception(exc) from exc
+        resp = response.text
+        logger.info("RESPONS: %s", redact_text(resp[:100]))
 
-            logger.info("RESPONS: %s", redact_text(resp[:100]))
-
-            try:
-                resp_json = r.json()
-                if self.json_path:
-                    temp = resp_json
-                    for key in self.json_path.split("."):
-                        temp = temp.get(key, {})
-                    resp = str(temp) if temp else resp
-                else:
-                    resp = self._auto_detect_response(resp_json)
-            except json.JSONDecodeError:
-                pass
-            return resp
-        except Exception as e:
-            return f"ERROR: {redact_text(str(e))}"
+        try:
+            resp_json = response.json()
+            if self.json_path:
+                temp = resp_json
+                for key in self.json_path.split("."):
+                    if not isinstance(temp, dict):
+                        break
+                    temp = temp.get(key, {})
+                resp = str(temp) if temp not in ({}, None, "") else resp
+            else:
+                resp = self._auto_detect_response(resp_json)
+        except json.JSONDecodeError:
+            pass
+        return resp

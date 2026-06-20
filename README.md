@@ -1,11 +1,11 @@
-# InjectionForge Pro X v1.1.3
+# InjectionForge Pro X v1.1.5
 
 Production-ready open-source framework for authorized prompt-injection, chatbot security, and sensitive-disclosure testing.
 
 [![CI](https://github.com/Mafifrizi/InjectionForgeProX/actions/workflows/ci.yml/badge.svg)](https://github.com/Mafifrizi/InjectionForgeProX/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-58%20pytest%20tests-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.3-orange)]()
+[![Version](https://img.shields.io/badge/version-1.1.5-orange)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 
 ## Overview
@@ -92,6 +92,22 @@ The flag is not a legal bypass. It is a safety reminder and workflow marker. You
 git clone https://github.com/Mafifrizi/InjectionForgeProX.git
 cd InjectionForgeProX
 pip install -r requirements.txt
+```
+
+### Dependency policy
+
+The project uses bounded compatible ranges for every direct dependency. This prevents an unreviewed major-version upgrade while keeping installation practical across supported Python platforms. For an immutable deployment, resolve these ranges into a hash-locked environment after validating the target platform:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip check
+```
+
+The optional browser-backed WAF workflow requires extra dependencies:
+
+```bash
+pip install -e ".[browser]"
 ```
 
 Headless browser mode requires Playwright browser assets:
@@ -577,6 +593,12 @@ Guidance:
 | WebSocket/SSE | 1 | 0.5-1 req/s |
 
 For real targets, start slow. Increase only when explicitly allowed.
+
+## Transport Retry and Rate-Limit Safety
+
+Built-in HTTP connectors use one shared retry contract. Retryable transport failures (`408`, `425`, `429`, `500`, `502`, `503`, `504`, connection failures, and timeouts) are retried with bounded exponential backoff; `Retry-After` is honored up to 60 seconds. Every retry passes through the same global rate limiter.
+
+Terminal transport errors are marked as `transport_error`, never passed to the analyzer, and never used to change adaptive payload weights. To prevent a campaign from amplifying provider throttling, a campaign-local circuit breaker stops new target calls after three consecutive exhausted `429` outcomes.
 
 ## Report Redaction
 
