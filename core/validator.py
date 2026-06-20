@@ -1,6 +1,7 @@
 import json
 from collections import defaultdict
 from pathlib import Path
+from .paths import bundled_data_dir
 from .analyzer import SmartAnalyzer, normalize_analysis_mode
 from .payloads import PayloadManager
 
@@ -14,8 +15,7 @@ def _item_expected(item):
 def validate_analyzer(data_dir: str = "data", light: bool = True, offline: bool = False,
                       language: str = "auto", analysis_mode: str = "balanced"):
     analysis_mode = normalize_analysis_mode(analysis_mode)
-    base = Path(__file__).parent.parent
-    test_path = (base / data_dir / "labeled_test_set.json").resolve()
+    test_path = (bundled_data_dir(data_dir) / "labeled_test_set.json").resolve()
     if not test_path.exists():
         print("[ERROR] labeled_test_set.json not found")
         return False

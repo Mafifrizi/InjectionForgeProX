@@ -34,6 +34,27 @@ def _status_text(result):
     return "SUCCESS" if result.get("success") else "FAIL"
 
 
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _spreadsheet_safe(value):
+    """Return a text cell that spreadsheet applications cannot interpret as a formula."""
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    text = str(value)
+    if text.lstrip().startswith(_FORMULA_PREFIXES):
+        return "'" + text
+    return text
+
+
+def _ensure_parent(output_path):
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _evidence_summary(result):
     evidence = result.get("evidence") or []
     if not evidence:
@@ -48,7 +69,7 @@ def _evidence_summary(result):
     return " | ".join(chunks)
 
 
-def generate_html_report(results, output_path, redact=False):
+def generate_html_report(results, output_path, redact=True):
     results = redact_results(results, enabled=redact)
     rows = ""
     for r in results:
@@ -116,23 +137,20 @@ tr.fail {{ background:#fff7ed; }}
 </body>
 </html>"""
 
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = _ensure_parent(output_path)
     path.write_text(html_content, encoding="utf-8")
 
 
-def generate_json_report(results, output_path, redact=False):
+def generate_json_report(results, output_path, redact=True):
     results = redact_results(results, enabled=redact)
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = _ensure_parent(output_path)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
 
-def generate_csv_report(results, output_path, redact=False):
+def generate_csv_report(results, output_path, redact=True):
     results = redact_results(results, enabled=redact)
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = _ensure_parent(output_path)
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -141,19 +159,20 @@ def generate_csv_report(results, output_path, redact=False):
         ])
         for r in results:
             writer.writerow([
-                r.get("round", ""), r.get("payload", ""), r.get("response", ""),
-                r.get("success", False), r.get("confidence", 0), r.get("method", ""),
-                r.get("severity", "Info"), r.get("leak_category", ""), r.get("analysis_mode", ""),
-                r.get("decision_reason", ""), _evidence_summary(r), json.dumps(r.get("leaked_data", []), ensure_ascii=False)
+                _spreadsheet_safe(r.get("round", "")), _spreadsheet_safe(r.get("payload", "")), _spreadsheet_safe(r.get("response", "")),
+                _spreadsheet_safe(r.get("success", False)), _spreadsheet_safe(r.get("confidence", 0)), _spreadsheet_safe(r.get("method", "")),
+                _spreadsheet_safe(r.get("severity", "Info")), _spreadsheet_safe(r.get("leak_category", "")), _spreadsheet_safe(r.get("analysis_mode", "")),
+                _spreadsheet_safe(r.get("decision_reason", "")), _spreadsheet_safe(_evidence_summary(r)), _spreadsheet_safe(json.dumps(r.get("leaked_data", []), ensure_ascii=False))
             ])
 
 
-def generate_pdf_report(results, output_path, redact=False):
+def generate_pdf_report(results, output_path, redact=True):
     results = redact_results(results, enabled=redact)
     if not HAS_PDF:
         print("[WARN] reportlab is not installed. Install it with: pip install reportlab")
         return
-    doc = SimpleDocTemplate(output_path, pagesize=A4)
+    output_path = _ensure_parent(output_path)
+    doc = SimpleDocTemplate(str(output_path), pagesize=A4)
     elements = []
     styles = getSampleStyleSheet()
     elements.append(Paragraph("InjectionForge Pro X Report", styles["Title"]))
@@ -182,7 +201,7 @@ def generate_pdf_report(results, output_path, redact=False):
     doc.build(elements)
 
 
-def generate_xlsx_report(results, output_path, redact=False):
+def generate_xlsx_report(results, output_path, redact=True):
     results = redact_results(results, enabled=redact)
     if not HAS_XLSX:
         print("[WARN] openpyxl is not installed. Install it with: pip install openpyxl")
@@ -196,23 +215,23 @@ def generate_xlsx_report(results, output_path, redact=False):
     ])
     for r in results:
         ws.append([
-            r.get("round", ""),
-            r.get("payload", ""),
-            r.get("response", ""),
-            _status_text(r),
-            r.get("confidence", 0),
-            r.get("severity", "Info"),
-            r.get("leak_category", ""),
-            r.get("method", ""),
-            r.get("analysis_mode", ""),
-            r.get("decision_reason", ""),
-            _evidence_summary(r),
-            ", ".join(r.get("leaked_data", [])),
+            _spreadsheet_safe(r.get("round", "")),
+            _spreadsheet_safe(r.get("payload", "")),
+            _spreadsheet_safe(r.get("response", "")),
+            _spreadsheet_safe(_status_text(r)),
+            _spreadsheet_safe(r.get("confidence", 0)),
+            _spreadsheet_safe(r.get("severity", "Info")),
+            _spreadsheet_safe(r.get("leak_category", "")),
+            _spreadsheet_safe(r.get("method", "")),
+            _spreadsheet_safe(r.get("analysis_mode", "")),
+            _spreadsheet_safe(r.get("decision_reason", "")),
+            _spreadsheet_safe(_evidence_summary(r)),
+            _spreadsheet_safe(", ".join(r.get("leaked_data", []))),
         ])
-    wb.save(output_path)
+    wb.save(_ensure_parent(output_path))
 
 
-def print_colored_summary(results, redact=False):
+def print_colored_summary(results, redact=True):
     results = redact_results(results, enabled=redact)
     for r in results:
         status = f"{Fore.GREEN}SUCCESS" if r.get("success") else f"{Fore.RED}FAIL"

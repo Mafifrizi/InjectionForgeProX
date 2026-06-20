@@ -1,27 +1,58 @@
 import re
-import requests
 from typing import Dict, Optional
 
+import requests
+
+from .rate_limiter import TokenBucketRateLimiter
+
+
 class TargetProfiler:
-    def __init__(self, endpoint: str, method: str = "GET",
-                 headers: Optional[Dict] = None, timeout: int = 10,
-                 insecure: bool = False):          # ← tambahan
+    """Low-noise target classification.
+
+    Active GraphQL introspection is intentionally opt-in because it can fall
+    outside an engagement's permitted discovery scope. Every HTTP request made
+    by the profiler passes through the shared rate limiter when provided.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        method: str = "GET",
+        headers: Optional[Dict] = None,
+        timeout: int = 10,
+        insecure: bool = False,
+        rate_limiter: Optional[TokenBucketRateLimiter] = None,
+        allow_graphql_introspection: bool = False,
+    ):
         self.endpoint = endpoint
         self.method = method.upper()
         self.headers = headers or {}
         self.timeout = timeout
         self.insecure = insecure
+        self.rate_limiter = rate_limiter
+        self.allow_graphql_introspection = allow_graphql_introspection
         self.profile = self._profile()
 
+    def _request(self, method: str, *args, **kwargs):
+        if self.rate_limiter:
+            self.rate_limiter.wait()
+        return requests.request(method, *args, **kwargs)
+
     def _profile(self) -> Dict:
+        if not self.endpoint:
+            return {"type": "unknown", "strategy": "basic", "payload_cat": "basic"}
         try:
             if self.method == "GET":
-                r = requests.get(self.endpoint, headers=self.headers,
-                                 timeout=self.timeout, verify=not self.insecure)
+                r = self._request(
+                    "GET", self.endpoint, headers=self.headers,
+                    timeout=self.timeout, verify=not self.insecure,
+                )
             else:
-                r = requests.post(self.endpoint, json={"message": "ping"},
-                                  headers=self.headers, timeout=self.timeout,
-                                  verify=not self.insecure)
+                r = self._request(
+                    "POST", self.endpoint, json={"message": "ping"},
+                    headers=self.headers, timeout=self.timeout,
+                    verify=not self.insecure,
+                )
             body = r.text[:1000]
             resp_headers = r.headers
         except Exception:
@@ -47,18 +78,20 @@ class TargetProfiler:
         return {"type": "generic", "strategy": "basic", "payload_cat": "basic"}
 
     def _is_graphql(self, body: str) -> bool:
-        if '"errors"' in body or 'graphql' in body.lower():
+        if '"errors"' in body or "graphql" in body.lower():
             return True
+        if not self.allow_graphql_introspection:
+            return False
         try:
-            r = requests.post(self.endpoint,
-                              json={"query": "{__schema{types{name}}}"},
-                              headers=self.headers, timeout=5,
-                              verify=not self.insecure)
-            if r.status_code == 200 and '"data"' in r.text:
-                return True
-        except:
-            pass
-        return False
+            r = self._request(
+                "POST", self.endpoint,
+                json={"query": "{__schema{types{name}}}"},
+                headers=self.headers, timeout=5,
+                verify=not self.insecure,
+            )
+            return r.status_code == 200 and '"data"' in r.text
+        except Exception:
+            return False
 
     def _is_openai_api(self, body, headers):
         return "chat.completions" in body or "openai" in str(headers).lower()

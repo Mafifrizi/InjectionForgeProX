@@ -9,6 +9,7 @@ from .connectors.base import BaseConnector
 from .attack_tree import AttackTree, AttackNode
 from .database import save_result
 from .rate_limiter import TokenBucketRateLimiter
+from .redaction import redact_text
 
 logger = logging.getLogger("InjectionForgeX")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -86,7 +87,7 @@ class InjectionEngine:
             try:
                 save_result(target_endpoint, result)
             except Exception as e:
-                logger.warning(f"Gagal menyimpan hasil ke database: {e}")
+                logger.warning("Gagal menyimpan hasil ke database: %s", redact_text(str(e)))
             return result
 
         # Multi-threading
@@ -103,28 +104,35 @@ class InjectionEngine:
 
     def _run_attack_tree(self):
         """Jalankan attack tree dan kumpulkan hasil."""
-        tree = AttackTree(self.connector, max_depth=self.max_depth, language=self.language)
+        tree = AttackTree(
+            self.connector,
+            max_depth=self.max_depth,
+            language=self.language,
+            analyzer=self.analyzer,
+            send_func=lambda payload: self._safe_send(payload, None),
+        )
         tree.expand(tree.root)
-        
-        for i, path in enumerate(tree.success_paths):
+
+        for i, (path, node) in enumerate(zip(tree.success_paths, tree.success_nodes), 1):
+            analysis = node.analysis or {}
             entry = {
-                "round": i+1,
+                "round": i,
                 "payload": " -> ".join(path),
-                "response": "Attack tree path berhasil",
+                "response": node.response or "",
                 "success": True,
-                "confidence": 0.98,
+                "confidence": analysis.get("confidence", 0.0),
                 "method": "attack_tree",
-                "leaked_data": [],
-                "diff": "",
-                "severity": "High",
-                "leak_category": "Instruction Override",
-                "analysis_mode": getattr(self.analyzer, "analysis_mode", "balanced"),
-                "decision_reason": "Attack tree found a successful path in the configured mock/target connector.",
-                "evidence": [{"category": "Instruction Override", "source": "attack_tree", "reason": "Successful path recorded by AttackTree.", "value_preview": "path"}],
-                "language": self.language
+                "leaked_data": analysis.get("leaked_data", []),
+                "diff": analysis.get("diff", ""),
+                "severity": analysis.get("severity", "Info"),
+                "leak_category": analysis.get("leak_category", ""),
+                "analysis_mode": analysis.get("analysis_mode", getattr(self.analyzer, "analysis_mode", "balanced")),
+                "decision_reason": analysis.get("decision_reason", "Evidence-gated attack-tree finding."),
+                "evidence": analysis.get("evidence", []),
+                "language": analysis.get("language", self.language)
             }
             self.results.append(entry)
-            logger.info(f"Attack tree path {i+1}: {entry['payload']}")
+            logger.info("Attack tree path %d: %s", i + 1, redact_text(entry["payload"]))
         
         if not tree.success_paths:
             self.results.append({
@@ -163,7 +171,7 @@ class InjectionEngine:
             except Exception as e:
                 last_exc = e
                 if attempt == retries - 1:
-                    logger.error(f"Gagal setelah {retries}x: {e}")
-                    return f"ERROR: {e}"
+                    logger.error("Gagal setelah %dx: %s", retries, redact_text(str(e)))
+                    return f"ERROR: {redact_text(str(e))}"
                 time.sleep(2 ** attempt)
-        return f"ERROR: {last_exc}"
+        return f"ERROR: {redact_text(str(last_exc))}"

@@ -1,11 +1,11 @@
-# InjectionForge Pro X v1.1.0
+# InjectionForge Pro X v1.1.3
 
 Production-ready open-source framework for authorized prompt-injection, chatbot security, and sensitive-disclosure testing.
 
 [![CI](https://github.com/Mafifrizi/InjectionForgeProX/actions/workflows/ci.yml/badge.svg)](https://github.com/Mafifrizi/InjectionForgeProX/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-50%20pytest%20tests-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-58%20pytest%20tests-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.0-orange)]()
+[![Version](https://img.shields.io/badge/version-1.1.3-orange)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 
 ## Overview
@@ -71,8 +71,8 @@ The flag is not a legal bypass. It is a safety reminder and workflow marker. You
 | Multilingual testing | English, Bahasa Indonesia, mixed-language, and automatic language mode. |
 | Evidence-gated analyzer | Avoids naive keyword-only detection. Requires concrete evidence before marking a finding as successful. |
 | Analysis modes | `strict`, `balanced`, and `sensitive` modes for different testing phases. |
-| FP/FN regression dataset | 153 labeled cases covering leaks, refusals, redacted values, benign echoes, examples, placeholders, and mixed-language responses. |
-| Report redaction | Redacts sensitive-looking values in reports by default. |
+| FP/FN regression dataset | 171 labeled cases covering leaks, refusals, redacted values, benign echoes, examples, placeholders, and mixed-language responses. |
+| Redaction and safe persistence | Redacts report output and runtime SQLite result storage by default, including analyzer-extracted literals. |
 | Rate limiting | Global token-bucket limiter shared across worker threads. |
 | Profiles | JSON/YAML profiles for repeatable target configuration. |
 | CI workflow | GitHub Actions workflow for compile checks, tests, analyzer validation, and benchmark evaluation. |
@@ -177,10 +177,10 @@ python forge_x.py --profile examples/profiles/mock-strict.json --rounds 2
 Expected baseline:
 
 ```text
-pytest: 50 tests passed
+pytest: 58 tests passed
 Analyzer validation: quality gate passed
 Benchmark: 100% precision and 100% recall on bundled regression dataset
-Version: InjectionForge Pro X 1.1.0
+Version: InjectionForge Pro X 1.1.1
 Profile mode: campaign runs successfully
 ```
 
@@ -319,7 +319,11 @@ Do not commit secrets, cookies, API keys, or generated report files.
 | `--workers` | integer | Worker thread count. |
 | `--rate-limit` | number | Global request rate limit across all workers. |
 | `--burst` | integer | Token-bucket burst size. |
-| `--ai-payloads` | boolean | Generate extra payloads with local AI payload engine. |
+| `--ai-payloads` | boolean | Generate target-aware assessment probes with a local LLM, retrieve validated prior probes for the same target scope, and retain analyzer-confirmed successes. |
+| `--ai-only` | boolean | Skip the template baseline and run only local AI-generated probes. Requires `--ai-payloads`. |
+| `--ai-generator-url` | URL | Local Ollama URL for adaptive AI probe generation. |
+| `--ai-generator-model` | model | Local model name for adaptive AI probe generation. |
+| `--ai-generator-timeout` | seconds | Local AI generation timeout; defaults to 8 seconds before safe fallback probes are used. |
 
 ### Attack Tree and Adaptive Agent Flags
 
@@ -340,7 +344,8 @@ Do not commit secrets, cookies, API keys, or generated report files.
 | `--stealth` | boolean | Enable User-Agent rotation and jitter. |
 | `--delay` | seconds | Base delay between requests. |
 | `--discover` | boolean | Auto-discover chat endpoints from a page. |
-| `--auto-profile` | boolean | Profile target and choose strategy. |
+| `--auto-profile` / `--no-auto-profile` | boolean | Enable or disable target profiling. Disabled by default; enable it only when profiling probes are authorized. |
+| `--discover-external` | boolean | Permit discovery to follow external script/endpoint references. Disabled by default to prevent unintended cross-origin requests. |
 | `--waf-detect` | boolean | Detect WAF without running a campaign. |
 | `--graphql-introspect` | boolean | Run GraphQL introspection where authorized. |
 
@@ -350,7 +355,7 @@ Do not commit secrets, cookies, API keys, or generated report files.
 |------|--------|-------------|
 | `--format` | `json`, `html`, `csv`, `pdf`, `xlsx`, `term` | Report format. |
 | `--output` | file path | Output report path. |
-| `--redact` | boolean | Enable report redaction. Enabled by default. |
+| `--redact` | boolean | Enable report redaction. Disabled by default; enable it only when profiling probes are authorized. |
 | `--no-redact` | boolean | Disable report redaction. Use only when safe. |
 | `--diff` | boolean | Compare response with a neutral baseline. |
 
@@ -402,6 +407,28 @@ python forge_x.py --profile examples/profiles/mock-strict.json --rounds 2
 - Keep one profile per engagement or target environment.
 - Prefer `strict` mode for final validation profiles.
 - Prefer `rate-limit` for small or sensitive production systems.
+
+## Adaptive AI Probe Generation
+
+`--ai-payloads` adds a local-model generation layer; it is not a replacement for validation. The engine derives a non-secret target description when one is not supplied, retrieves previously validated probes for the same target fingerprint, generates bounded assessment probes through a local Ollama model, and stores only analyzer-confirmed successes with redacted metadata.
+
+The default is hybrid: a short deterministic baseline can establish behavior, then AI-generated probes add target-aware coverage. Use `--ai-only` when an authorized engagement explicitly requires generated probes without the template baseline.
+
+```bash
+# Hybrid baseline plus generated probes
+python forge_x.py --target custom --endpoint "https://target.example/api/chat" \
+  --method POST --json-path "reply" --ai-payloads \
+  --ai-generator-url "http://localhost:11434" --ai-generator-model llama3 \
+  --rounds 10 --workers 1 --rate-limit 1 --authorized --offline
+
+# Generated probes only; use on an explicitly authorized target
+python forge_x.py --target custom --endpoint "https://target.example/api/chat" \
+  --method POST --json-path "reply" --ai-payloads --ai-only \
+  --target-description "customer-support assistant with retrieval" \
+  --rounds 10 --workers 1 --rate-limit 1 --authorized --offline
+```
+
+The generator is deliberately constrained to synthetic assessment markers and must not be treated as a mechanism for requesting real credentials or confidential data. The retained database stores payload metadata and evidence summaries, not raw target responses.
 
 ## Target Examples
 
@@ -553,7 +580,7 @@ For real targets, start slow. Increase only when explicitly allowed.
 
 ## Report Redaction
 
-Reports are redacted by default. Redaction applies to response bodies, leaked-data fields, and evidence previews.
+Reports are redacted by default. Redaction applies to response bodies, leaked-data fields, evidence previews, and every concrete value extracted by the analyzer. Runtime SQLite result storage uses the same redaction policy by default, so a report is not the only protected output.
 
 Default behavior:
 
@@ -650,7 +677,7 @@ Example analysis metadata:
 
 ## Validation Dataset
 
-The bundled regression dataset contains 153 labeled cases across these case types:
+The bundled regression dataset contains 171 labeled cases across these case types:
 
 - `api_key_leak`
 - `token_leak`

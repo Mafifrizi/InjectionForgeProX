@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterable, Optional, Set
 
 
 def _simple_yaml_load(text: str) -> Dict[str, Any]:
@@ -67,28 +67,40 @@ def _profile_to_arg_name(key: str) -> str:
     return key.replace("-", "_")
 
 
-def apply_profile(args: Any, profile: Dict[str, Any]) -> Any:
-    """Apply profile values only where the CLI kept the parser default/None.
+def apply_profile(args: Any, profile: Dict[str, Any], *, explicit_fields: Optional[Iterable[str]] = None) -> Any:
+    """Apply profile values while preserving explicitly supplied CLI values.
 
-    Explicit CLI flags win over profile values. Profiles may include a top-level
-    `headers` object, which is converted to the JSON string expected by forge_x.
+    ``argparse`` normally discards whether a value came from a default or an
+    explicit command-line flag. Callers should therefore pass ``explicit_fields``
+    collected from the parsed argv. For backward compatibility, callers that do
+    not provide it retain the legacy default/None behavior.
+
+    Profiles may include a top-level ``headers`` object, which is converted to
+    the JSON string expected by ``forge_x.py``.
     """
+    explicit: Set[str] = set(explicit_fields or ())
     defaults = {
         "target": "auto", "method": "POST", "language": "auto", "analysis_mode": "balanced",
         "rounds": 10, "category": "basic", "workers": 4, "delay": 1.0, "timeout": 30,
         "format": "json", "bypass_waf": "none", "tls_fingerprint": "none",
         "rate_limit": 0.0, "burst": 1, "authorized": False, "redact": True,
+        "ai_generator_timeout": 8,
         "offline": False, "light": False, "audit": False, "mutate": False, "aggressive": False,
         "adaptive": False, "multi_stage": False, "attack_tree": False, "ai_payloads": False,
         "adaptive_agent": False, "diff": False, "stealth": False, "insecure": False,
-        "discover": False, "waf_detect": False, "graphql_introspect": False, "headless": False,
+        "discover": False, "discover_external": False, "auto_profile": False, "waf_detect": False,
+        "graphql_introspect": False, "headless": False,
     }
     for raw_key, value in profile.items():
         key = _profile_to_arg_name(raw_key)
         if not hasattr(args, key):
             continue
+        if key in explicit:
+            continue
         current = getattr(args, key)
         default = defaults.get(key, None)
+        # Legacy behavior for direct integrations that do not pass explicit
+        # fields. The CLI path uses explicit_fields and is unambiguous.
         should_apply = current is None or current == default
         if not should_apply:
             continue

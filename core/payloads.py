@@ -4,14 +4,14 @@ import threading
 from pathlib import Path
 from typing import Dict, List
 
+from .paths import bundled_data_dir
 from .language import language_family, normalize_language, unique_preserve_order
 from .payload_generator import generate_aggressive_payload, generate_graphql_payload
 
 
 class PayloadManager:
     def __init__(self, data_dir: str = "data", language: str = "en"):
-        base = Path(__file__).parent.parent
-        self.data_dir = (base / data_dir).resolve()
+        self.data_dir = bundled_data_dir(data_dir)
         self.language = normalize_language(language)
         self.payloads = self._load_all()
         self.refusal = self._load_refusals()

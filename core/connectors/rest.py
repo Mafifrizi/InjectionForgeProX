@@ -7,6 +7,7 @@ import logging
 from typing import Dict, Optional, List
 from .base import BaseConnector
 from ..utils import load_user_agents, random_user_agent
+from ..redaction import redact_text
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -78,7 +79,7 @@ class RESTChatbotConnector(BaseConnector):
                     self.base_headers["Authorization"] = f"Bearer {self._auth_token}"
                     break
         except Exception as e:
-            print(f"[!] Gagal fetch auth token: {e}")
+            print(f"[!] Gagal fetch auth token: {redact_text(str(e))}")
 
     def _fetch_csrf_token(self):
         if self.csrf_token_url.startswith("http"):
@@ -98,7 +99,7 @@ class RESTChatbotConnector(BaseConnector):
                 if self._csrf_token:
                     self.base_headers["X-CSRFToken"] = self._csrf_token
             except Exception as e:
-                print(f"[!] Gagal fetch CSRF token: {e}")
+                print(f"[!] Gagal fetch CSRF token: {redact_text(str(e))}")
         else:
             self._csrf_token = self.csrf_token_url
             self.base_headers["X-CSRFToken"] = self._csrf_token
@@ -113,6 +114,17 @@ class RESTChatbotConnector(BaseConnector):
         if self.stealth:
             headers["User-Agent"] = random_user_agent(self._user_agents)
         return headers
+
+    @staticmethod
+    def _safe_headers_for_log(headers: Dict[str, str]) -> Dict[str, str]:
+        secret_markers = ("authorization", "cookie", "token", "api-key", "apikey", "secret", "password")
+        safe = {}
+        for key, value in headers.items():
+            if any(marker in key.lower() for marker in secret_markers):
+                safe[key] = "[REDACTED]"
+            else:
+                safe[key] = redact_text(str(value))
+        return safe
 
     def _auto_detect_response(self, response_json: dict) -> str:
         def find_strings(obj, depth=0):
@@ -150,10 +162,10 @@ class RESTChatbotConnector(BaseConnector):
         else:
             params = {"message": prompt}
 
-        # Logging header untuk debugging
-        logger.info(f"Headers yang dikirim: {headers}")
-        logger.info(f"PAYLOAD: {prompt[:80]}")
-        logger.info(f"Mengirim {self.method} ke {self.endpoint}")
+        # Logs must not become a second copy of credentials or leaked values.
+        logger.info("Headers yang dikirim: %s", self._safe_headers_for_log(headers))
+        logger.info("PAYLOAD: %s", redact_text(prompt[:80]))
+        logger.info("Mengirim %s ke %s", self.method, redact_text(self.endpoint))
 
         if self.stealth:
             time.sleep(self.delay * random.uniform(0.7, 1.3))
@@ -170,7 +182,7 @@ class RESTChatbotConnector(BaseConnector):
             r.raise_for_status()
             resp = r.text
 
-            logger.info(f"RESPONS: {resp[:100]}")
+            logger.info("RESPONS: %s", redact_text(resp[:100]))
 
             try:
                 resp_json = r.json()
@@ -185,4 +197,4 @@ class RESTChatbotConnector(BaseConnector):
                 pass
             return resp
         except Exception as e:
-            raise
+            return f"ERROR: {redact_text(str(e))}"

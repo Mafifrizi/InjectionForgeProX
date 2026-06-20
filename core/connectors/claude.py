@@ -1,5 +1,6 @@
 import requests
 from .base import BaseConnector
+from ..redaction import redact_text
 
 class ClaudeConnector(BaseConnector):
     def __init__(self, api_key: str, model: str = "claude-3-sonnet-20240229", timeout: int = 30, **kwargs):
@@ -22,4 +23,4 @@ class ClaudeConnector(BaseConnector):
             r.raise_for_status()
             return r.json()["content"][0]["text"]
         except Exception as e:
-            return f"ERROR: {e}"
+            return f"ERROR: {redact_text(str(e))}"

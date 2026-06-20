@@ -35,6 +35,16 @@ jobs:
       - name: Unit tests
         run: pytest -q
 
+      - name: Build wheel
+        run: python -m pip wheel . --no-deps -w dist
+
+      - name: Installed-wheel smoke test
+        run: |
+          pip install --no-deps dist/*.whl
+          cd /tmp
+          injectionforge --version
+          injectionforge --validate --light --offline --analysis-mode balanced
+
       - name: Analyzer validation
         run: python forge_x.py --validate --light --offline --analysis-mode balanced
 

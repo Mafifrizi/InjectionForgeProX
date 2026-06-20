@@ -1,5 +1,6 @@
 import requests
 from .base import BaseConnector
+from ..redaction import redact_text
 
 class GeminiConnector(BaseConnector):
     def __init__(self, api_key: str, model: str = "gemini-pro", timeout: int = 30, **kwargs):
@@ -20,4 +21,4 @@ class GeminiConnector(BaseConnector):
             r.raise_for_status()
             return r.json()["candidates"][0]["content"]["parts"][0]["text"]
         except Exception as e:
-            return f"ERROR: {e}"
+            return f"ERROR: {redact_text(str(e))}"

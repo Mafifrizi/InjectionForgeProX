@@ -3,8 +3,10 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DB_NAME = str(PROJECT_ROOT / "injectionforge_results.db")
+from .redaction import redact_result, redact_text
+from .paths import default_runtime_file
+
+DB_NAME = str(default_runtime_file("injectionforge_results.db"))
 
 
 def _connect():
@@ -36,7 +38,15 @@ def init_db():
     conn.close()
 
 
-def save_result(target, result):
+def save_result(target, result, redact: bool = True):
+    """Persist a result safely.
+
+    Runtime storage uses the same redaction policy as generated reports by
+    default. This avoids silently retaining raw credentials in SQLite before a
+    report is generated. Pass ``redact=False`` only for restricted local
+    evidence handling.
+    """
+    stored = redact_result(result, enabled=redact)
     conn = _connect()
     c = conn.cursor()
     c.execute("""
@@ -44,15 +54,15 @@ def save_result(target, result):
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         datetime.now().isoformat(),
-        target,
-        result.get("payload", ""),
-        result.get("response", ""),
-        result.get("success", False),
-        result.get("confidence", 0),
-        result.get("method", ""),
-        result.get("leak_category", ""),
-        result.get("severity", "Info"),
-        json.dumps(result.get("leaked_data", []))
+        redact_text(str(target or "")),
+        stored.get("payload", ""),
+        stored.get("response", ""),
+        stored.get("success", False),
+        stored.get("confidence", 0),
+        stored.get("method", ""),
+        stored.get("leak_category", ""),
+        stored.get("severity", "Info"),
+        json.dumps(stored.get("leaked_data", []))
     ))
     conn.commit()
     conn.close()

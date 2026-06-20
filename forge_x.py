@@ -10,6 +10,7 @@ from core.payloads import PayloadManager
 from core.analyzer import SmartAnalyzer, normalize_analysis_mode
 from core.engine import InjectionEngine
 from core.validator import validate_analyzer
+from core.redaction import redact_text
 from core.reporter import (generate_json_report, generate_html_report,
                            generate_csv_report, generate_pdf_report,
                            generate_xlsx_report, print_colored_summary)
@@ -24,7 +25,7 @@ from core.payload_engine import AIPayloadEngine
 from core.config import load_profile, apply_profile
 from core.rate_limiter import build_rate_limiter
 
-VERSION = "1.1.0"
+VERSION = "1.1.3"
 
 
 def parse_headers(val):
@@ -64,11 +65,47 @@ def parse_auth_data(val):
     try:
         return json.loads(val)
     except (json.JSONDecodeError, ValueError):
-        return dict(kv.split("=") for kv in val.split(",") if "=" in kv)
+        return {key.strip(): value.strip() for key, value in (item.split("=", 1) for item in val.split(",") if "=" in item)}
 
+
+
+def _explicit_cli_fields(parser: argparse.ArgumentParser, argv: list[str]) -> set[str]:
+    """Return argparse destinations explicitly supplied on the command line.
+
+    Profile precedence cannot be inferred from parsed values because a user can
+    intentionally provide a value equal to the parser default (for example,
+    ``--rounds 10``). This helper preserves that intent before profile values
+    are applied.
+    """
+    option_to_dest = {
+        option: action.dest
+        for action in parser._actions
+        for option in action.option_strings
+    }
+    explicit: set[str] = set()
+    for token in argv:
+        if token == "--":
+            break
+        option = token.split("=", 1)[0] if token.startswith("-") else ""
+        destination = option_to_dest.get(option)
+        if destination:
+            explicit.add(destination)
+    return explicit
+
+
+def _derived_target_description(args) -> str:
+    """Build a non-secret description for adaptive local generation."""
+    if args.target_description:
+        return redact_text(args.target_description)
+    endpoint = redact_text(args.endpoint or "local/default endpoint")
+    return (
+        f"authorized {args.target} chatbot assessment; method={args.method}; "
+        f"endpoint={endpoint}; language={args.language}; category={args.category}"
+    )
 
 def main():
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description=f"InjectionForge Pro X v{VERSION} - Production Ready",
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="""
@@ -138,7 +175,11 @@ Contoh penggunaan:
     parser.add_argument("--attack-tree", action="store_true", help="Gunakan attack tree multi-turn adaptif")
     parser.add_argument("--max-depth", type=int, default=2, help="Kedalaman maksimum attack tree")
     parser.add_argument("--workers", type=int, default=4, help="Jumlah thread untuk multi-threading")
-    parser.add_argument("--ai-payloads", action="store_true", help="Gunakan AIPayloadEngine (LLM lokal) untuk generate payload tambahan")
+    parser.add_argument("--ai-payloads", action="store_true", help="Generate adaptive assessment probes with a local LLM and retain validated successes")
+    parser.add_argument("--ai-only", action="store_true", help="Run only AI-generated probes; skip the template baseline campaign")
+    parser.add_argument("--ai-generator-url", default="http://localhost:11434", help="Local Ollama URL for --ai-payloads")
+    parser.add_argument("--ai-generator-model", default="llama3", help="Local model name for --ai-payloads")
+    parser.add_argument("--ai-generator-timeout", type=int, default=8, help="Local AI generation timeout in seconds (default: 8)")
 
     # Fitur baru: Adaptive Agent & LLM Generator
     parser.add_argument("--adaptive-agent", action="store_true", help="Gunakan adaptive multi-turn agent dengan auto-profiling")
@@ -157,7 +198,8 @@ Contoh penggunaan:
 
     # Discovery & profiling
     parser.add_argument("--discover", action="store_true", help="Auto-discovery endpoint dari halaman web")
-    parser.add_argument("--auto-profile", action="store_true", default=True, help="Profil target & pilih strategi otomatis")
+    parser.add_argument("--discover-external", action="store_true", help="Allow auto-discovery to follow external script/endpoint references")
+    parser.add_argument("--auto-profile", action=argparse.BooleanOptionalAction, default=False, help="Enable or disable target profiling (default: disabled)")
     parser.add_argument("--waf-detect", action="store_true", help="Deteksi WAF tanpa menjalankan serangan")
     parser.add_argument("--graphql-introspect", action="store_true", help="Introspect GraphQL schema sebelum serangan")
 
@@ -170,7 +212,9 @@ Contoh penggunaan:
     parser.add_argument("--insecure", action="store_true", help="Nonaktifkan verifikasi SSL (hanya untuk testing internal yang sah!)")
     parser.add_argument("--llm-judge", help="URL Ollama untuk LLM judge (contoh: http://localhost:11434)")
 
-    args = parser.parse_args()
+    raw_argv = sys.argv[1:]
+    args = parser.parse_args(raw_argv)
+    explicit_cli_fields = _explicit_cli_fields(parser, raw_argv)
 
     if args.version:
         print(f"InjectionForge Pro X {VERSION}")
@@ -178,7 +222,7 @@ Contoh penggunaan:
 
     if args.profile:
         try:
-            args = apply_profile(args, load_profile(args.profile))
+            args = apply_profile(args, load_profile(args.profile), explicit_fields=explicit_cli_fields)
         except Exception as e:
             sys.exit(f"[!] Profile error: {e}")
 
@@ -208,13 +252,13 @@ Contoh penggunaan:
 
     # Auto-discovery
     if args.discover and args.endpoint:
-        print(f"[*] Mencari endpoint dari {args.endpoint}...")
-        discovered = discover_endpoint(args.endpoint, insecure=args.insecure)
+        print(f"[*] Mencari endpoint dari {redact_text(args.endpoint)}...")
+        discovered = discover_endpoint(args.endpoint, insecure=args.insecure, allow_external=args.discover_external)
         if discovered:
             args.endpoint = discovered["endpoint"]
             args.method = discovered.get("method", "POST")
             args.json_path = discovered.get("json_path", None)
-            print(f"   Ditemukan: {args.method} {args.endpoint}")
+            print(f"   Ditemukan: {args.method} {redact_text(args.endpoint)}")
         else:
             print("[!] Gagal menemukan endpoint.")
 
@@ -246,7 +290,14 @@ Contoh penggunaan:
 
     # Profiling
     if args.auto_profile and args.target in ("auto", "custom", "graphql"):
-        profiler = TargetProfiler(args.endpoint, args.method, parse_headers(args.headers), insecure=args.insecure)
+        profiler = TargetProfiler(
+            args.endpoint,
+            args.method,
+            parse_headers(args.headers),
+            insecure=args.insecure,
+            rate_limiter=rate_limiter,
+            allow_graphql_introspection=args.graphql_introspect,
+        )
         profile = profiler.profile
         print(f"[Profile] {profile.get('type')} -> strategi: {profile.get('strategy')}")
         if args.target == "auto":
@@ -297,8 +348,6 @@ Contoh penggunaan:
                 base_url=args.endpoint or "http://localhost:11434",
                 model=args.model or "llama3"
             )
-            # --- TAMBAHKAN INI: Aktifkan logging debug untuk konektor Ollama ---
-            logging.getLogger("InjectionForgeX.Ollama").setLevel(logging.DEBUG)
         else:  # huggingface
             key = args.api_key or os.environ.get("HF_TOKEN")
             from core.connectors.huggingface import HuggingFaceConnector
@@ -307,9 +356,30 @@ Contoh penggunaan:
                 api_key=key
             )
     else:
-        if args.method.upper() == "WS":
+        method_upper = args.method.upper()
+        if method_upper == "WS":
             from core.connectors.websocket import WebSocketConnector
-            conn = WebSocketConnector(endpoint=args.endpoint, timeout=args.timeout)
+            conn = WebSocketConnector(
+                endpoint=args.endpoint,
+                timeout=args.timeout,
+                headers=parse_headers(args.headers),
+                cookie=args.cookie,
+                api_key=args.api_key or "",
+                verify_ssl=not args.insecure,
+                proxy=args.proxy,
+            )
+        elif method_upper == "SSE":
+            from core.connectors.sse import SSEConnector
+            sse_headers = parse_headers(args.headers)
+            if args.cookie:
+                sse_headers.setdefault("Cookie", args.cookie)
+            conn = SSEConnector(
+                endpoint=args.endpoint,
+                api_key=args.api_key or "",
+                headers=sse_headers,
+                timeout=args.timeout,
+                verify_ssl=not args.insecure,
+            )
         else:
             from core.connectors.rest import RESTChatbotConnector
             conn = RESTChatbotConnector(
@@ -331,10 +401,12 @@ Contoh penggunaan:
     ai_engine = None
     if args.ai_payloads:
         ai_engine = AIPayloadEngine(
-            db_path="data/payloads.db",
-            ollama_url=args.llm_judge or "http://localhost:11434"
+            ollama_url=args.ai_generator_url,
+            model=args.ai_generator_model,
+            language=args.language,
+            timeout=args.ai_generator_timeout,
         )
-        print("[*] AIPayloadEngine aktif - akan generate payload AI.")
+        print("[*] Adaptive AI probe engine aktif (local model, evidence-gated retention).")
 
     # =========================================================
     # Adaptive Agent (dengan kemungkinan override generator)
@@ -345,12 +417,22 @@ Contoh penggunaan:
 
         llm_gen = LLMGenerator(language=args.language)
         if ai_engine:
-            class AIWrapper:
-                def generate(self, prompt, **kwargs):
-                    desc = args.target_description or "generic target"
-                    return ai_engine.generate(desc, context=None, n=1)[0]
-            llm_gen = AIWrapper()
-            print("[*] Adaptive Agent akan menggunakan AIPayloadEngine untuk payload.")
+            class AIProbeAdapter:
+                def __init__(self, engine, language):
+                    self.engine = engine
+                    self.language = language
+
+                def generate_payloads(self, target_description, strategy="instruction_boundary", n=1):
+                    return self.engine.generate(
+                        target_description,
+                        context=f"strategy={strategy}",
+                        n=n,
+                        strategy=strategy,
+                        language=self.language,
+                    )
+
+            llm_gen = AIProbeAdapter(ai_engine, args.language)
+            print("[*] Adaptive Agent akan menggunakan adaptive AI probe engine.")
 
         adaptive_analyzer = SmartAnalyzer(
             pm.refusal,
@@ -365,12 +447,12 @@ Contoh penggunaan:
         if not args.target_description:
             print("[*] Auto-profiling target...")
             auto_desc = agent.auto_profile()
-            print(f"[*] Profil otomatis: {auto_desc[:100]}...")
+            print(f"[*] Profil otomatis: {redact_text(auto_desc[:100])}...")
         else:
             agent.target_description = args.target_description
-            print(f"[*] Menggunakan deskripsi manual: {args.target_description}")
+            print(f"[*] Menggunakan deskripsi manual: {redact_text(args.target_description)}")
 
-        print(f"[*] Adaptive Agent aktif. Target: {agent.target_description}")
+        print(f"[*] Adaptive Agent aktif. Target: {redact_text(agent.target_description)}")
         results = agent.run_adaptive_session(max_turns=args.rounds)
 
         success = sum(1 for r in results if r["success"])
@@ -381,7 +463,7 @@ Contoh penggunaan:
             for r in results:
                 if r["success"]:
                     ai_engine.record_success(
-                        target_description=args.target_description or "adaptive_session",
+                        target_description=agent.target_description or _derived_target_description(args),
                         payload=r["payload"],
                         leak_category=r.get("leak_category", "unknown"),
                         severity=r.get("severity", "Medium")
@@ -391,7 +473,7 @@ Contoh penggunaan:
             status = "SUCCESS" if r["success"] else "FAIL"
             cat = r.get("leak_category", "")
             sev = r.get("severity", "Info")
-            print(f"  Turn {i} [{r['strategy']}]: {r['payload'][:80]}... -> {status} {cat}/{sev}")
+            print(f"  Turn {i} [{r['strategy']}]: {redact_text(r['payload'][:80])}... -> {status} {cat}/{sev}")
 
         out = args.output or f"reports/adaptive_report.{args.format if args.format != 'term' else 'json'}"
         if args.format == "json":
@@ -439,29 +521,41 @@ Contoh penggunaan:
         rate_limiter=rate_limiter
     )
 
-    if args.attack_tree:
-        print(f"[*] Memulai attack-tree ke {args.target} (max_depth={args.max_depth}, language={args.language})...")
-    else:
-        print(f"[*] Memulai kampanye {args.rounds} round ke {args.target}...")
-    results = engine.run_campaign(
-        rounds=args.rounds,
-        category=args.category,
-        mutate=args.mutate,
-        aggressive=args.aggressive,
-        adaptive=args.adaptive,
-        history=history,
-        multi_stage=args.multi_stage,
-        audit=args.audit,
-        target_endpoint=args.endpoint
-    )
+    if args.ai_only and not args.ai_payloads:
+        sys.exit("[!] --ai-only requires --ai-payloads")
 
-    # ========== PATCH: AI Payloads (tambahan) ==========
-    if ai_engine and args.target_description:
+    if args.ai_only:
+        print("[*] AI-only mode: template baseline campaign skipped.")
+        results = []
+    else:
+        if args.attack_tree:
+            print(f"[*] Memulai attack-tree ke {args.target} (max_depth={args.max_depth}, language={args.language})...")
+        else:
+            print(f"[*] Memulai kampanye {args.rounds} round ke {args.target}...")
+        results = engine.run_campaign(
+            rounds=args.rounds,
+            category=args.category,
+            mutate=args.mutate,
+            aggressive=args.aggressive,
+            adaptive=args.adaptive,
+            history=history,
+            multi_stage=args.multi_stage,
+            audit=args.audit,
+            target_endpoint=args.endpoint
+        )
+
+    # Adaptive local generation works with an explicit description or a derived
+    # non-secret target profile, so --ai-payloads is not silently skipped.
+    if ai_engine:
+        ai_target_description = _derived_target_description(args)
         print("[*] Menghasilkan payload AI tambahan...")
         ai_payloads = ai_engine.generate(
-            target_description=args.target_description,
+            target_description=ai_target_description,
             context=None,
-            n=args.rounds
+            n=args.rounds,
+            language=args.language,
+            strategy="instruction_boundary",
+            target_fingerprint=ai_engine.target_fingerprint(args.endpoint or ai_target_description),
         )
         print(f"[*] Mendapat {len(ai_payloads)} payload AI. Mengirim...")
 
@@ -493,7 +587,7 @@ Contoh penggunaan:
                 return {
                     "round": -1,
                     "payload": payload,
-                    "response": str(e),
+                    "response": redact_text(str(e)),
                     "success": False,
                     "confidence": 0.0,
                     "method": "ai_generated",
@@ -528,10 +622,14 @@ Contoh penggunaan:
         for r in ai_results:
             if r["success"]:
                 ai_engine.record_success(
-                    target_description=args.target_description,
+                    target_description=ai_target_description,
+                    target_fingerprint=ai_engine.target_fingerprint(args.endpoint or ai_target_description),
                     payload=r["payload"],
-                    leak_category="ai_injection",
-                    severity=r.get("severity", "Medium")
+                    leak_category=r.get("leak_category", "ai_probe"),
+                    severity=r.get("severity", "Medium"),
+                    evidence_summary=r.get("decision_reason", ""),
+                    language=r.get("language", args.language),
+                    probe_family="instruction_boundary",
                 )
         print(f"[*] {len(ai_results)} payload AI selesai diproses.")
 

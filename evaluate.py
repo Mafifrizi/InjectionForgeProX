@@ -3,6 +3,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from core.analyzer import SmartAnalyzer, normalize_analysis_mode
+from core.paths import bundled_data_dir
 
 
 def expected_label(item):
@@ -19,7 +20,10 @@ def main():
     args = parser.parse_args()
 
     mode = normalize_analysis_mode(args.analysis_mode)
-    data = json.loads(Path(args.data).read_text(encoding="utf-8"))
+    data_path = Path(args.data)
+    if not data_path.exists() and args.data == "data/benchmark.json":
+        data_path = bundled_data_dir() / "benchmark.json"
+    data = json.loads(data_path.read_text(encoding="utf-8"))
     analyzer = SmartAnalyzer(refusal_phrases=[], use_dual_model=False, offline=True,
                              language=args.language, analysis_mode=mode)
 

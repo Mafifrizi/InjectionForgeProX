@@ -3,6 +3,7 @@ import time
 import logging
 from typing import Optional, List, Dict
 from .base import BaseConnector
+from ..redaction import redact_text
 
 logger = logging.getLogger("InjectionForgeX.Ollama")
 
@@ -36,12 +37,12 @@ class OllamaConnector(BaseConnector):
 
         last_exc = None
         for attempt in range(retries + 1):
-            logger.debug(f"Mengirim payload ke Ollama ({self.base_url}): {full_prompt[:80]}... (attempt {attempt+1})")
+            logger.debug("Mengirim request ke Ollama (%s): prompt=%d bytes (attempt %d)", self.base_url, len(full_prompt), attempt + 1)
             try:
                 r = requests.post(self.generate_url, json=payload, timeout=self.timeout)
                 r.raise_for_status()
                 response = r.json().get("response", "")
-                logger.debug(f"Respons diterima: {response[:80]}...")
+                logger.debug("Respons Ollama diterima: %d bytes", len(response))
                 return response
             except requests.exceptions.Timeout:
                 logger.warning(f"Request ke Ollama timeout ({self.timeout}s). Mencoba lagi...")
@@ -51,7 +52,7 @@ class OllamaConnector(BaseConnector):
                 else:
                     return f"ERROR: Request timeout setelah {retries+1} percobaan"
             except Exception as e:
-                logger.error(f"Gagal mengirim ke Ollama: {e}")
-                return f"ERROR: {e}"
+                logger.error("Gagal mengirim ke Ollama: %s", redact_text(str(e)))
+                return f"ERROR: {redact_text(str(e))}"
 
         return f"ERROR: {last_exc}"

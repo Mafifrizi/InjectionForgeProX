@@ -7,6 +7,7 @@ from .connectors.base import BaseConnector
 from .language import detect_language_from_samples, language_family, normalize_language
 from .llm_generator import LLMGenerator
 from .rate_limiter import TokenBucketRateLimiter
+from .redaction import redact_text
 
 
 class AdaptiveAgent:
@@ -89,7 +90,12 @@ class AdaptiveAgent:
                 if self.rate_limiter:
                     self.rate_limiter.wait()
                 resp = self.connector.send(probe)
-                responses.append(resp[:300])
+                # Use analyzer-extracted literals plus generic redaction before
+                # forwarding any target output to the local profiling model.
+                profile_analysis = self.analyzer.analyze(probe, resp)
+                profile_result = {"response": resp, **profile_analysis}
+                from .redaction import redact_result
+                responses.append(redact_result(profile_result).get("response", "")[:300])
             except Exception:
                 pass
 
@@ -117,24 +123,27 @@ Responses:
 
 Target description (ONE SENTENCE):"""
 
-            try:
-                r = requests.post(
-                    f"{self.llm_gen.base_url}/api/generate",
-                    json={"model": self.llm_gen.model, "prompt": prompt, "stream": False,
-                          "options": {"temperature": 0.2, "num_predict": 80}},
-                    timeout=20
-                )
-                if r.status_code == 200:
-                    desc = r.json().get("response", "").strip()
-                    if desc and len(desc) > 15:
-                        self.target_description = desc
-                        return desc
-            except Exception:
-                pass
+            base_url = getattr(self.llm_gen, "base_url", None)
+            model = getattr(self.llm_gen, "model", None)
+            if base_url and model:
+                try:
+                    r = requests.post(
+                        f"{base_url}/api/generate",
+                        json={"model": model, "prompt": prompt, "stream": False,
+                              "options": {"temperature": 0.2, "num_predict": 80}},
+                        timeout=20
+                    )
+                    if r.status_code == 200:
+                        desc = r.json().get("response", "").strip()
+                        if desc and len(desc) > 15:
+                            self.target_description = redact_text(desc)
+                            return self.target_description
+                except Exception:
+                    pass
 
         if responses:
             first_sentence = responses[0].split(".")[0] + "."
-            self.target_description = first_sentence[:150]
+            self.target_description = redact_text(first_sentence[:150])
             return self.target_description
 
         if self.language == "id":
@@ -213,6 +222,7 @@ Target description (ONE SENTENCE):"""
                 consecutive_neutral = 0
 
             results.append({
+                "round": turn + 1,
                 "turn": turn + 1,
                 "strategy": strategy,
                 "payload": payload,

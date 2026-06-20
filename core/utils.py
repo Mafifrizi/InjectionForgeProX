@@ -1,8 +1,11 @@
 import random
 from pathlib import Path
 
+from .paths import bundled_data_dir
+
 def load_user_agents(file_path: str = "data/user_agents.txt") -> list:
-    path = Path(__file__).parent.parent / file_path
+    candidate = Path(file_path)
+    path = candidate if candidate.is_absolute() else bundled_data_dir() / candidate.name
     if path.exists():
         return [line.strip() for line in path.read_text().splitlines() if line.strip()]
     return [

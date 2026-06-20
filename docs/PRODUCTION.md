@@ -71,3 +71,10 @@ python forge_x.py --target mock --attack-tree --max-depth 3 --offline --language
 - `__pycache__/`
 - `*.pyc`
 - `.env` or credential files
+## Redaction and local persistence
+
+Keep report redaction enabled for shared artifacts. InjectionForge also redacts SQLite result storage by default. Treat `--no-redact` and any raw evidence workflow as restricted internal handling only.
+
+## Adaptive AI probe generation
+
+Use `--ai-payloads` only with a local model you control and an authorized target. The engine stores only analyzer-confirmed successful probe metadata, keyed by a target fingerprint, and does not retain raw target responses.

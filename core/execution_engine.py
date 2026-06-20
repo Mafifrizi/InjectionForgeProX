@@ -1,65 +1,72 @@
-# core/execution_engine.py
+"""Legacy execution helper retained for integrations outside the CLI path.
+
+The main CLI uses ``TokenBucketRateLimiter``. This helper protects its local
+pacing state with a lock so direct integrations cannot exceed the configured
+rate delay under concurrent worker use.
+"""
+
 import threading
 import time
+from typing import Callable, Dict, List
+
 import requests
-from typing import List, Dict, Optional, Callable
-from queue import Queue
+
 
 class ExecutionEngine:
-    """Engine eksekusi paralel dengan rate‑limit awareness."""
-    
+    """Parallel execution helper with thread-safe pacing and bounded retry."""
+
     def __init__(self, max_threads: int = 3, rate_limit_delay: float = 1.0):
-        self.max_threads = max_threads
-        self.rate_limit_delay = rate_limit_delay
+        self.max_threads = max(1, int(max_threads or 1))
+        self.rate_limit_delay = max(0.0, float(rate_limit_delay or 0.0))
         self.session = requests.Session()
-        self.last_request_time = 0
-    
-    def _rate_limit_wait(self):
-        """Tunggu sesuai rate limit."""
-        elapsed = time.time() - self.last_request_time
-        if elapsed < self.rate_limit_delay:
-            time.sleep(self.rate_limit_delay - elapsed)
-        self.last_request_time = time.time()
-    
+        self.last_request_time = 0.0
+        self._rate_lock = threading.Lock()
+
+    def _rate_limit_wait(self) -> None:
+        if self.rate_limit_delay <= 0:
+            return
+        with self._rate_lock:
+            now = time.monotonic()
+            elapsed = now - self.last_request_time
+            if elapsed < self.rate_limit_delay:
+                time.sleep(self.rate_limit_delay - elapsed)
+            self.last_request_time = time.monotonic()
+
     def send_with_retry(self, send_func: Callable, payload: str, max_retries: int = 3) -> str:
-        """Kirim payload dengan retry dan rate‑limit awareness."""
-        for attempt in range(max_retries):
+        attempts = max(1, int(max_retries or 1))
+        for attempt in range(attempts):
             self._rate_limit_wait()
             try:
                 return send_func(payload)
-            except requests.exceptions.HTTPError as e:
-                if e.response is not None and e.response.status_code == 429:
-                    wait = (2 ** attempt) + 1
-                    print(f"[!] Rate limited, menunggu {wait}s...")
-                    time.sleep(wait)
+            except requests.exceptions.HTTPError as error:
+                if error.response is not None and error.response.status_code == 429:
+                    time.sleep((2 ** attempt) + 1)
                     continue
                 raise
             except Exception:
-                if attempt == max_retries - 1:
+                if attempt == attempts - 1:
                     raise
                 time.sleep(2 ** attempt)
         return "ERROR: Max retries exceeded"
-    
+
     def run_parallel(self, send_func: Callable, payloads: List[str]) -> List[Dict]:
-        """Jalankan payload secara paralel."""
-        results = []
-        queue = Queue()
-        
-        def worker(p):
-            resp = self.send_with_retry(send_func, p)
-            results.append({"payload": p, "response": resp})
-        
-        threads = []
-        for p in payloads:
-            t = threading.Thread(target=worker, args=(p,))
-            t.start()
-            threads.append(t)
+        results: List[Dict] = []
+        result_lock = threading.Lock()
+
+        def worker(payload: str) -> None:
+            response = self.send_with_retry(send_func, payload)
+            with result_lock:
+                results.append({"payload": payload, "response": response})
+
+        threads: List[threading.Thread] = []
+        for payload in payloads:
+            thread = threading.Thread(target=worker, args=(payload,))
+            thread.start()
+            threads.append(thread)
             if len(threads) >= self.max_threads:
-                for t in threads:
-                    t.join()
+                for item in threads:
+                    item.join()
                 threads = []
-        
-        for t in threads:
-            t.join()
-        
+        for item in threads:
+            item.join()
         return results

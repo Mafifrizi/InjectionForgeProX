@@ -1,5 +1,6 @@
 import requests
 from .base import BaseConnector
+from ..redaction import redact_text
 
 class CohereConnector(BaseConnector):
     def __init__(self, api_key: str, model: str = "command-r-plus", timeout: int = 30, **kwargs):
@@ -19,4 +20,4 @@ class CohereConnector(BaseConnector):
             r.raise_for_status()
             return r.json()["generations"][0]["text"]
         except Exception as e:
-            return f"ERROR: {e}"
+            return f"ERROR: {redact_text(str(e))}"

@@ -1,5 +1,6 @@
 import requests
 from .base import BaseConnector
+from ..redaction import redact_text
 
 class HuggingFaceConnector(BaseConnector):
     def __init__(self, endpoint: str, api_key: str = "", timeout: int = 30, **kwargs):
@@ -22,4 +23,4 @@ class HuggingFaceConnector(BaseConnector):
                 return resp["generated_text"]
             return str(resp)
         except Exception as e:
-            return f"ERROR: {e}"
+            return f"ERROR: {redact_text(str(e))}"

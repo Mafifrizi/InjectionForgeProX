@@ -1,5 +1,6 @@
 import requests
 from .base import BaseConnector
+from ..redaction import redact_text
 
 class OpenAIConnector(BaseConnector):
     def __init__(self, api_key: str, model: str = "gpt-3.5-turbo", timeout: int = 30, **kwargs):
@@ -21,4 +22,4 @@ class OpenAIConnector(BaseConnector):
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            return f"ERROR: {e}"
+            return f"ERROR: {redact_text(str(e))}"
